@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { constants, copyFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ApplyPlan, MergePlan } from '../../shared/types'
 import { baseOf, git, MAX_BUFFER, run, upstreamState, worktrees } from './exec'
@@ -120,9 +120,40 @@ async function fullPatch(cwd: string, base: string): Promise<string> {
   return git(cwd, ['diff', '--binary', '--no-color', base, '--', '.', ':(exclude).claude/worktrees/**'])
 }
 
+/**
+ * The agents' own checkouts, which the parent repository sees as plain untracked paths. Every list
+ * of files that feeds the apply path has to drop them, and one rule doing it keeps the plan and the
+ * copy that follows it judging the same set of files.
+ */
+function inWorktrees(path: string): boolean {
+  return path === '.claude/worktrees' || path.startsWith('.claude/worktrees/')
+}
+
 async function untrackedFiles(cwd: string): Promise<string[]> {
   const out = await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z']).catch(() => '')
-  return out.split('\0').filter(Boolean).filter((p) => !p.startsWith('.claude/worktrees/'))
+  return out.split('\0').filter(Boolean).filter((p) => !inWorktrees(p))
+}
+
+/**
+ * Uncommitted paths in a checkout, untracked ones included, since an untracked file is exactly what
+ * the apply path can destroy without leaving a copy anywhere.
+ */
+async function dirtyPaths(cwd: string): Promise<string[]> {
+  // `-z` because the porcelain quotes any path with a space in it, and the plan compares these
+  // against names cut out of a patch. The entry is never trimmed first: the status letters are
+  // columns, so slice(3) is the path only while the two letters and their separator are still there.
+  const entries = (await git(cwd, ['status', '--porcelain', '-uall', '-z'])).split('\0')
+  const out: string[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    if (entry.length < 4) continue
+    // a rename or copy is followed by its old path in the next NUL-separated field
+    if (entry[0] === 'R' || entry[0] === 'C') i += 1
+    // a nested repository stays a single directory entry even under -uall, hence the trailing slash
+    const path = entry.slice(3).replace(/\/$/, '')
+    if (!inWorktrees(path)) out.push(path)
+  }
+  return out
 }
 
 export async function applyPlan(cwd: string): Promise<ApplyPlan> {
@@ -163,10 +194,7 @@ export async function applyPlan(cwd: string): Promise<ApplyPlan> {
   // The target checkout usually has unrelated work in it, and applying alongside that is the normal
   // case. What is not safe is applying *over* it: a file the patch rewrites that also holds edits of
   // the user's own has no way back, since neither version is committed anywhere. Refuse only that.
-  const dirty = (await git(host.path, ['status', '--porcelain', '-uno']))
-    .split('\n')
-    .filter((l) => l.length > 3)
-    .map((l) => l.slice(3))
+  const dirty = await dirtyPaths(host.path)
   plan.dirtyTarget = dirty.length
   const touched = new Set(
     patch
@@ -174,11 +202,14 @@ export async function applyPlan(cwd: string): Promise<ApplyPlan> {
       .filter((l) => l.startsWith('diff --git '))
       .map((l) => l.replace(/^diff --git a\/(.+?) b\/.*$/, '$1'))
   )
+  // the untracked files are in no patch, so they have to be named here too or the copy that carries
+  // them across is judged by nothing at all
+  for (const rel of extras) touched.add(rel)
   plan.overlaps = dirty.filter((f) => touched.has(f))
   if (plan.overlaps.length) {
     plan.reason =
-      `${plan.overlaps.length} file(s) have uncommitted changes in ${base} that this patch also ` +
-      `rewrites, and neither version is committed: ${plan.overlaps.slice(0, 4).join(', ')}`
+      `${plan.overlaps.length} file(s) are uncommitted in ${base} and this apply would write over ` +
+      `them, with neither version committed: ${plan.overlaps.slice(0, 4).join(', ')}`
     return plan
   }
 
@@ -229,15 +260,32 @@ export async function applyChanges(cwd: string): Promise<string> {
 
   // untracked files are in no diff, so they are copied across by hand
   const extras = await untrackedFiles(cwd)
+  const copied: string[] = []
+  const skipped: string[] = []
   for (const rel of extras) {
     const from = join(cwd, rel)
     const to = join(plan.at, rel)
     mkdirSync(dirname(to), { recursive: true })
-    copyFileSync(from, to)
+    try {
+      // COPYFILE_EXCL, never a plain copy: a file already standing here is the user's, the plan
+      // refused every case where losing it is survivable, and an overwrite is the one mistake this
+      // path cannot undo. Skipping and saying so beats a success message over a destroyed file.
+      copyFileSync(from, to, constants.COPYFILE_EXCL)
+      copied.push(rel)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      skipped.push(rel)
+    }
   }
 
   const parts = [`applied ${plan.files} file(s) onto ${base}`]
-  if (extras.length) parts.push(`${extras.length} new file(s) copied`)
+  if (copied.length) parts.push(`${copied.length} new file(s) copied`)
+  if (skipped.length) {
+    parts.push(
+      `${skipped.length} not copied, ${base} already has a file of that name and it was left ` +
+        `untouched: ${skipped.slice(0, 4).join(', ')}`
+    )
+  }
   parts.push('left unstaged for review; nothing was staged or committed')
   return parts.join(' · ')
 }
