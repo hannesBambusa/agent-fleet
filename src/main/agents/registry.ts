@@ -21,6 +21,23 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+// Claude Code names its transcripts after a UUID. Anything else in that directory was not written by
+// it, so it is never adopted as a session id, quoted or not.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A name that is safe to use as a directory. Free text arrives here from the launch dialog, and it
+ * ends up as a path segment under `.claude/worktrees`, where `..` would escape the repository.
+ */
+function safeName(raw: string): string {
+  const clean = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+  return clean || 'agent'
+}
+
 // agents have the Claude in Chrome extension available too; without this they reach for it and open
 // a window outside the app, which the user cannot see in the browser pane
 const BROWSER_PROMPT = [
@@ -96,7 +113,8 @@ export class AgentRegistry extends EventEmitter {
 
   launch(req: LaunchRequest, cols: number, rows: number): Agent {
     const sessionId = req.resumeSessionId ?? randomUUID()
-    const wanted = req.name || slugFrom(req.prompt) || 'agent'
+    // the typed name becomes a directory under .claude/worktrees, so it is slugged like the fallback
+    const wanted = safeName(req.name || slugFrom(req.prompt))
     // Claude Code refuses to create a worktree whose directory already exists, and an abandoned one
     // from an earlier run keeps its name, so the launch died on the spot with nothing on screen.
     const name = req.worktree ? freeWorktreeName(req.repoPath, wanted) : wanted
@@ -199,6 +217,10 @@ export class AgentRegistry extends EventEmitter {
     if (changed) {
       this.save()
       this.emit('update', a)
+    if (!UUID.test(sessionId)) {
+      console.error('[agents] refusing to adopt a session id that is not a uuid:', sessionId)
+      return
+    }
     }
   }
 
@@ -220,9 +242,12 @@ export class AgentRegistry extends EventEmitter {
       args.push('--mcp-config', shellQuote(browserMcpConfig(a.id)))
       args.push('--append-system-prompt', shellQuote(BROWSER_PROMPT))
     }
-    if (mode === 'resume') args.push('--resume', a.sessionId)
+    // Every argument on this line goes through `zsh -lc`. The session id is usually a UUID we
+    // generated, but rebind() takes it from a filename under ~/.claude/projects, which any process on
+    // the machine can write to, so it is untrusted input like any other.
+    if (mode === 'resume') args.push('--resume', shellQuote(a.sessionId))
     else {
-      args.push('--session-id', a.sessionId, '--name', shellQuote(a.name))
+      args.push('--session-id', shellQuote(a.sessionId), '--name', shellQuote(a.name))
       if (a.worktree) args.push('--worktree', shellQuote(a.name))
       if (a.prompt) args.push(shellQuote(a.prompt))
     }
