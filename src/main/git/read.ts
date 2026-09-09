@@ -115,16 +115,41 @@ export async function diff(
 
 const SEP = '\x1f'
 
-async function commits(cwd: string, range: string, max = 25): Promise<GitCommit[]> {
-  const fmt = ['%h', '%s', '%aI', '%an', '%D'].join(SEP)
-  const out = await git(cwd, ['log', `--max-count=${max}`, `--format=${fmt}`, range]).catch(() => '')
+const FMT = ['%h', '%s', '%aI', '%an', '%D', '%p'].join(SEP)
+
+function parse(out: string): GitCommit[] {
   return out
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const [sha, subject, at, author, refs] = line.split(SEP)
-      return { sha, subject, at, author, refs: refs ? refs.split(', ').filter(Boolean) : [] }
+      const [sha, subject, at, author, refs, parents] = line.split(SEP)
+      return {
+        sha,
+        subject,
+        at,
+        author,
+        refs: refs ? refs.split(', ').filter(Boolean) : [],
+        parents: parents ? parents.split(' ').filter(Boolean) : []
+      }
     })
+}
+
+async function commits(cwd: string, range: string, max = 25): Promise<GitCommit[]> {
+  const out = await git(cwd, ['log', `--max-count=${max}`, `--format=${FMT}`, range]).catch(() => '')
+  return parse(out)
+}
+
+/**
+ * History across every ref, in the order the graph is drawn.
+ *
+ * `--date-order` rather than the default: it keeps a branch's commits together instead of
+ * interleaving them strictly by date, which is what makes the lanes readable. `--all` so a worktree's
+ * branch and the remote's head both show up beside main, which is the whole point of looking.
+ */
+export function graph(cwd: string, max = 200): Promise<GitCommit[]> {
+  return git(cwd, ['log', '--all', '--date-order', `--max-count=${max}`, `--format=${FMT}`])
+    .then(parse)
+    .catch(() => [])
 }
 
 export function log(cwd: string, max = 120): Promise<GitCommit[]> {

@@ -26,6 +26,17 @@ await build({
 })
 const { stateOf } = await import(`file://${out}`).then((m) => m.default ?? m)
 
+const hooksOut = join(dir, 'hooks.cjs')
+await build({
+  entryPoints: ['src/shared/hooks.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  outfile: hooksOut,
+  logLevel: 'error'
+})
+const { claimFor } = await import(`file://${hooksOut}`).then((m) => m.default ?? m)
+
 const NOW = Date.parse('2026-01-01T12:00:00.000Z')
 const ago = (ms) => new Date(NOW - ms).toISOString()
 const SECOND = 1000
@@ -131,6 +142,36 @@ test('a hook claim of idle beats an open tool call', () => {
 test('going idle clears the current tool, staying running does not', () => {
   assert.equal(stateOf(session({ transcript: [item('text', 60 * SECOND)] }), NOW).clearTool, true)
   assert.equal(stateOf(session({ transcript: [item('tool', 5 * SECOND)] }), NOW).clearTool, false)
+})
+
+
+// ---- hook claims -----------------------------------------------------------
+// The mapping both processes read. SessionStart claiming "running" is the bug that painted every
+// freshly opened agent green; it is the case most worth pinning down.
+
+test('SessionStart claims nothing: it is not work', () => {
+  assert.equal(claimFor('SessionStart'), null)
+})
+
+test('prompts and tool calls claim running', () => {
+  assert.equal(claimFor('UserPromptSubmit'), 'running')
+  assert.equal(claimFor('PreToolUse'), 'running')
+  assert.equal(claimFor('PostToolUse'), 'running')
+})
+
+test('a permission prompt is waiting, any other notification is not', () => {
+  assert.equal(claimFor('Notification', 'permission_prompt'), 'waiting')
+  assert.equal(claimFor('Notification', 'anything_else'), 'idle')
+})
+
+test('Stop hands the turn back, SessionEnd closes it', () => {
+  assert.equal(claimFor('Stop'), 'idle')
+  assert.equal(claimFor('SessionEnd'), 'ended')
+})
+
+test('an unknown event claims nothing rather than guessing', () => {
+  assert.equal(claimFor('PreCompact'), null)
+  assert.equal(claimFor(''), null)
 })
 
 test.after(() => rmSync(dir, { recursive: true, force: true }))

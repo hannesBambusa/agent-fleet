@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import type { HookEvent, SessionState } from '../../shared/types'
+import { claimFor } from '../../shared/hooks'
 import type { Tailer } from '../sessions/tailer'
 
 export const HOOK_PORT = Number(process.env['AGENT_FLEET_HOOK_PORT'] ?? 47391)
@@ -14,25 +15,7 @@ interface HookPayload {
 }
 
 function stateFor(p: HookPayload): SessionState | null {
-  switch (p.hook_event_name) {
-    // SessionStart is not work. It fires on startup, resume, /clear and compaction, when the session
-    // is sitting there waiting for a prompt, and claiming "running" for it painted every freshly
-    // opened agent green and put a Working bar over its composer. No claim: let the transcript speak.
-    case 'SessionStart':
-      return null
-    case 'UserPromptSubmit':
-    case 'PreToolUse':
-    case 'PostToolUse':
-      return 'running'
-    case 'Notification':
-      return p.notification_type === 'permission_prompt' ? 'waiting' : 'idle'
-    case 'Stop':
-      return 'idle'
-    case 'SessionEnd':
-      return 'ended'
-    default:
-      return null
-  }
+  return claimFor(p.hook_event_name ?? '', p.notification_type)
 }
 
 export function startHookServer(tailer: Tailer, onEvent?: (e: HookEvent) => void): Server {

@@ -155,6 +155,8 @@ export interface GitCommit {
   author: string
   /** branch and tag names pointing at this commit */
   refs: string[]
+  /** abbreviated parent shas, first one is the branch this commit continues */
+  parents: string[]
 }
 
 export interface GitCommitDetail {

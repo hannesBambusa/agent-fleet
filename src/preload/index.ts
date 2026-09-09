@@ -73,6 +73,7 @@ const api = {
   usage: (): Promise<UsageSnapshot> => ipcRenderer.invoke('usage:read'),
   gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke('git:status', cwd),
   gitPush: (cwd: string): Promise<string> => ipcRenderer.invoke('git:push', cwd),
+  gitGraph: (cwd: string, max?: number): Promise<GitCommit[]> => ipcRenderer.invoke('git:graph', cwd, max),
   gitLog: (cwd: string): Promise<GitCommit[]> => ipcRenderer.invoke('git:log', cwd),
   gitMergePlan: (cwd: string): Promise<MergePlan> => ipcRenderer.invoke('git:mergePlan', cwd),
   gitMerge: (cwd: string): Promise<string> => ipcRenderer.invoke('git:merge', cwd),

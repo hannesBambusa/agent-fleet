@@ -15,6 +15,7 @@ import {
   commit as gitCommit,
   commitDetail as gitCommitDetail,
   diff as gitDiff,
+  graph as gitGraph,
   log as gitLog,
   applyChanges as gitApply,
   applyPlan as gitApplyPlan,
@@ -156,6 +157,7 @@ function wireIpc(): void {
   ipcMain.handle('usage:read', () => usage())
   ipcMain.handle('git:status', (_, cwd: string) => gitStatus(cwd))
   ipcMain.handle('git:push', (_, cwd: string) => gitPush(cwd))
+  ipcMain.handle('git:graph', (_, cwd: string, max?: number) => gitGraph(cwd, max))
   ipcMain.handle('git:log', (_, cwd: string) => gitLog(cwd))
   ipcMain.handle('git:mergePlan', (_, cwd: string) => gitMergePlan(cwd))
   ipcMain.handle('git:merge', (_, cwd: string) => gitMerge(cwd))
@@ -186,6 +188,11 @@ function wireIpc(): void {
 
 void app.whenReady().then(() => {
   electronApp.setAppUserModelId('se.bambusa.agent-fleet')
+  // A packaged app carries its icon in the bundle. In development Electron shows its own, which
+  // makes the dev window hard to pick out of a Dock that already has the real app in it.
+  if (!app.isPackaged) {
+    app.dock?.setIcon(join(app.getAppPath(), 'resources', 'icon.png'))
+  }
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
   agents = new AgentRegistry(ptys)

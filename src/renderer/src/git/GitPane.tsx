@@ -278,7 +278,10 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
   const empty = status && !counts.staged && !counts.unstaged && !counts.committed
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col bg-[var(--panel)]">
+    // Fills the pane until it gets wide, then stops: a file list and a diff read badly at 1600px.
+    // Left aligned rather than centred, so the column stays where the eye already is when the panel
+    // is resized and the pane does not appear to drift.
+    <div className="flex h-full w-full min-w-0 max-w-[1080px] flex-1 flex-col bg-[var(--panel)]">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--line)] px-3">
         <span className="lbl">branch</span>
         <span className="mono truncate text-[11px]">{status?.branch ?? '—'}</span>

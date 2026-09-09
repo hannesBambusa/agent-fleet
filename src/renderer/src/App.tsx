@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Agent, LaunchRequest, Session } from '../../shared/types'
+import type { Agent, LaunchRequest, Session, SessionState } from '../../shared/types'
 import { useSessions } from './state/sessions'
 import { useHookStatus } from './state/hooks'
+import { fresh, useHookClaims } from './state/hookState'
 import { useAgents } from './state/agents'
 import { useNow } from './lib/useNow'
 import { TopBar } from './fleet/TopBar'
@@ -27,7 +28,7 @@ const WIDTH_KEY = 'agent-fleet.fleetWidth'
 const BETWEEN_TOOLS_MS = 25_000
 
 // a launched agent whose JSONL has not appeared yet still needs a card
-function placeholder(a: Agent, ptyAt: number | undefined): Session {
+function placeholder(a: Agent, ptyAt: number | undefined, said: SessionState | null): Session {
   return {
     id: a.sessionId,
     origin: 'app',
@@ -54,15 +55,21 @@ function placeholder(a: Agent, ptyAt: number | undefined): Session {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     context: 0,
     currentTool: null,
-    // No transcript yet, so the pty is the only proof of work: Claude Code can go minutes without
-    // writing the JSONL while it is genuinely busy, and time since launch alone called those agents
-    // idle. The launch window stays as the case where nothing has been printed yet.
+    // No transcript yet, so state comes from what Claude Code itself has said: a hook claim first,
+    // then the pty, which proves it is at least printing. Age since launch is not evidence of work —
+    // painting every new agent running for a minute is what made an agent waiting for its first
+    // prompt look busy.
     state:
-      a.status !== 'exited' &&
-      ((ptyAt !== undefined && Date.now() - ptyAt < BETWEEN_TOOLS_MS) ||
-        Date.now() - Date.parse(a.createdAt) < 60_000)
-        ? 'running'
-        : 'idle',
+      a.status === 'exited'
+        ? 'idle'
+        : (said ??
+          (ptyAt !== undefined && Date.now() - ptyAt < BETWEEN_TOOLS_MS
+            ? 'running'
+            : // an agent launched with a prompt starts working at once, and prints nothing for a
+              // moment while Claude Code boots; one without a prompt is waiting for you
+              a.prompt && Date.now() - Date.parse(a.createdAt) < 15_000
+              ? 'running'
+              : 'idle')),
     closed: false,
     hookState: null,
     transcript: []
@@ -88,6 +95,7 @@ export default function App(): JSX.Element {
   const usage = useUsage()
   const theme = useTheme()
   const ptyAt = usePtyActivity()
+  const claims = useHookClaims()
   const [selected, setSelected] = useState<string | null>(null)
   const [opened, setOpened] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
@@ -112,7 +120,7 @@ export default function App(): JSX.Element {
     const tracked = new Set(all.map((s) => s.id))
     const extra = agents
       .filter((a) => !tracked.has(a.sessionId) && a.status !== 'exited')
-      .map((a) => placeholder(a, ptyAt.get(a.id)))
+      .map((a) => placeholder(a, ptyAt.get(a.id), fresh(claims.get(a.sessionId), now)))
     return [...extra, ...live].map((s) => {
       if (s.parentId) return s
       const a = agentBySession.get(s.id)
@@ -120,7 +128,7 @@ export default function App(): JSX.Element {
     })
     // `now` is in here because a placeholder's state is read off the clock: without it a card that
     // stopped printing would keep claiming running until some unrelated session happened to update
-  }, [all, agents, agentBySession, ptyAt, now])
+  }, [all, agents, agentBySession, ptyAt, claims, now])
 
   // a freshly launched agent opens straight into its terminal
   useEffect(() => {

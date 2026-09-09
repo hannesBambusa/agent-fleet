@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { GitCommit, GitCommitDetail } from '../../../shared/types'
 import { age } from '../lib/format'
 import { DiffView } from './DiffView'
+import { layout, refBadges, type Row } from './graph'
+
+// one row, and the lane spacing the rail is drawn on
+const ROW = 24
+const LANE = 13
 
 const letterColor: Record<string, string> = {
   M: 'text-[#e0af68]',
@@ -21,7 +26,8 @@ export function History({ cwd }: { cwd: string }): JSX.Element {
     setSha(null)
     setDetail(null)
     setFile(null)
-    void window.api.gitLog(cwd).then(setList).catch(() => setList([]))
+    // every ref, not just this branch: the point of a graph is seeing the other branches
+    void window.api.gitGraph(cwd, 200).then(setList).catch(() => setList([]))
   }, [cwd])
 
   useEffect(() => {
@@ -31,36 +37,27 @@ export function History({ cwd }: { cwd: string }): JSX.Element {
     void window.api.gitCommit(cwd, sha).then(setDetail).catch(() => setDetail(null))
   }, [cwd, sha])
 
+  const { rows, width } = useMemo(() => layout(list ?? []), [list])
+
   useEffect(() => {
     if (!sha || !file) return
     void window.api.gitDiff(cwd, file, false, false, undefined, sha).then(setDiff).catch(() => setDiff(''))
   }, [cwd, sha, file])
 
   if (!list) return <Center>reading history…</Center>
-  if (!list.length) return <Center>no commits on this branch yet</Center>
+  if (!list.length) return <Center>no commits yet</Center>
 
   return (
     <div className="flex h-full flex-col">
       <div className="max-h-[45%] shrink-0 overflow-auto border-b border-[var(--line)]">
-        {list.map((c) => (
-          <button
-            key={c.sha}
-            onClick={() => setSha(c.sha === sha ? null : c.sha)}
-            className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-[var(--raised)] ${
-              c.sha === sha ? 'bg-[var(--raised)] shadow-[inset_2px_0_0_var(--accent)]' : ''
-            }`}
-          >
-            <span className="mono shrink-0 text-[10px] text-[var(--accent)]">{c.sha}</span>
-            <span className="min-w-0 flex-1 truncate text-[11px]" title={c.subject}>
-              {c.subject}
-            </span>
-            {c.refs.slice(0, 2).map((r) => (
-              <span key={r} className="lbl shrink-0 rounded bg-[var(--raised)] px-1 py-0.5" title={r}>
-                {r.replace('HEAD -> ', '')}
-              </span>
-            ))}
-            <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{age(c.at)}</span>
-          </button>
+        {rows.map((r) => (
+          <GraphRow
+            key={r.commit.sha}
+            row={r}
+            width={width}
+            selected={r.commit.sha === sha}
+            onPick={() => setSha(r.commit.sha === sha ? null : r.commit.sha)}
+          />
         ))}
       </div>
 
@@ -101,6 +98,84 @@ export function History({ cwd }: { cwd: string }): JSX.Element {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * One commit, with the piece of the graph that passes through its row.
+ *
+ * The rail is drawn per row rather than as one tall SVG so the list stays a plain scrolling column:
+ * lines that continue are straight, lines that change lane bend halfway down, which is what makes a
+ * merge read as a merge.
+ */
+function GraphRow({
+  row,
+  width,
+  selected,
+  onPick
+}: {
+  row: Row
+  width: number
+  selected: boolean
+  onPick: () => void
+}): JSX.Element {
+  const x = (lane: number): number => lane * LANE + LANE / 2
+  const mid = ROW / 2
+  const badges = refBadges(row.commit.refs)
+  return (
+    <button
+      onClick={onPick}
+      style={{ height: ROW }}
+      className={`flex w-full items-center gap-2 pr-3 text-left hover:bg-[var(--raised)] ${
+        selected ? 'bg-[var(--raised)] shadow-[inset_2px_0_0_var(--accent)]' : ''
+      }`}
+    >
+      <svg width={width * LANE + 8} height={ROW} className="shrink-0" style={{ marginLeft: 4 }} aria-hidden>
+        {row.links.map((l, i) =>
+          l.straight ? (
+            <line key={i} x1={x(l.from)} y1={0} x2={x(l.from)} y2={ROW} stroke={l.color} strokeWidth={1.5} />
+          ) : (
+            <path
+              key={i}
+              d={`M ${x(l.from)} 0 C ${x(l.from)} ${mid}, ${x(l.to)} ${mid}, ${x(l.to)} ${ROW}`}
+              fill="none"
+              stroke={l.color}
+              strokeWidth={1.5}
+            />
+          )
+        )}
+        {row.up && <line x1={x(row.lane)} y1={0} x2={x(row.lane)} y2={mid} stroke={row.color} strokeWidth={1.5} />}
+        {row.down && <line x1={x(row.lane)} y1={mid} x2={x(row.lane)} y2={ROW} stroke={row.color} strokeWidth={1.5} />}
+        <circle
+          cx={x(row.lane)}
+          cy={mid}
+          r={4}
+          fill={row.commit.parents.length > 1 ? 'var(--panel)' : row.color}
+          stroke={row.color}
+          strokeWidth={2}
+        />
+      </svg>
+      <span className="min-w-0 flex-1 truncate text-[11px]" title={row.commit.subject}>
+        {row.commit.subject}
+      </span>
+      {badges.slice(0, 3).map((b) => (
+        <span
+          key={b.label}
+          title={b.label}
+          className="mono shrink-0 rounded-full px-1.5 py-[1px] text-[9px]"
+          style={
+            b.kind === 'head'
+              ? { background: 'var(--accent)', color: 'var(--ink)' }
+              : b.kind === 'remote'
+                ? { background: 'color-mix(in srgb, var(--sub) 22%, transparent)', color: 'var(--sub)' }
+                : { background: 'var(--raised)', color: 'var(--muted)' }
+          }
+        >
+          {b.label.replace(/^origin\//, '↑')}
+        </span>
+      ))}
+      <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{age(row.commit.at)}</span>
+    </button>
   )
 }
 
