@@ -33,11 +33,12 @@ import {
 } from './git'
 import { usage } from './usage'
 import { catalog } from './catalog'
+import { Attention } from './attention'
 import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
 import { listDir, readTextFile } from './files/browse'
 import { seedApply, seedPlan } from './git/seed'
-import type { Agent, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
+import type { Agent, AttentionSettings, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
 
 // same data folder whether started via pnpm dev, a direct electron run, or the packaged app
 app.setName('agent-fleet')
@@ -47,6 +48,7 @@ const tailer = new Tailer()
 const ptys = new PtyManager()
 let agents: AgentRegistry
 let repos: RepoRegistry
+let attention: Attention
 let browser: BrowserManager
 
 function createWindow(): BrowserWindow {
@@ -124,6 +126,13 @@ function wireIpc(): void {
   ipcMain.handle('hooks:install', () => installHooks())
   ipcMain.handle('hooks:uninstall', () => uninstallHooks())
 
+  ipcMain.handle('attention:list', () => attention.list())
+  ipcMain.handle('attention:prefs', () => attention.prefs())
+  ipcMain.handle('attention:setPrefs', (_, p: Partial<AttentionSettings>) => attention.setPrefs(p))
+  ipcMain.handle('attention:dismiss', (_, id: string) => attention.dismiss(id))
+  ipcMain.handle('attention:clear', () => attention.clear())
+  // the renderer says what is on screen, so the app does not announce what you are looking at
+  ipcMain.on('attention:watching', (_, sessionId: string | null) => attention.watching(sessionId))
   ipcMain.handle('catalog:list', () => catalog(repos.list().map((r) => r.path)))
   ipcMain.handle('catalog:mcp', () => mcpServers(repos.list().map((r) => r.path)))
   ipcMain.handle('repos:list', (): Repo[] => repos.list())
@@ -217,6 +226,9 @@ void app.whenReady().then(() => {
 
   agents = new AgentRegistry(ptys)
   repos = new RepoRegistry()
+  attention = new Attention()
+  attention.on('update', (items) => broadcast('attention:update', items))
+  attention.on('open', (sessionId: string) => broadcast('attention:open', sessionId))
   browser = new BrowserManager(() => BrowserWindow.getAllWindows()[0] ?? null)
   wireIpc()
 
@@ -225,6 +237,7 @@ void app.whenReady().then(() => {
     broadcast('sessions:update', s)
     const list = agents.list()
     const owner = list.find((a) => a.sessionId === s.id)
+    attention.saw(s, !!owner)
     if (owner) {
       // a session the tailer has given up on cannot bring its agent back to life
       if (s.state !== 'ended' && !s.closed) agents.markLive(owner.id, s.cwd)

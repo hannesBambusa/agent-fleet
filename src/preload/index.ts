@@ -3,6 +3,8 @@ import { homedir } from 'node:os'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   Agent,
+  AttentionItem,
+  AttentionSettings,
   CatalogItem,
   BrowserState,
   DirEntry,
@@ -62,6 +64,19 @@ const api = {
   shell: {
     openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:open', path),
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:external', url)
+  },
+
+  // what needs a person: approvals to give, agents that finished
+  attention: {
+    list: (): Promise<AttentionItem[]> => ipcRenderer.invoke('attention:list'),
+    prefs: (): Promise<AttentionSettings> => ipcRenderer.invoke('attention:prefs'),
+    setPrefs: (p: Partial<AttentionSettings>): Promise<AttentionSettings> =>
+      ipcRenderer.invoke('attention:setPrefs', p),
+    dismiss: (id: string): Promise<void> => ipcRenderer.invoke('attention:dismiss', id),
+    clear: (): Promise<void> => ipcRenderer.invoke('attention:clear'),
+    watching: (sessionId: string | null): void => ipcRenderer.send('attention:watching', sessionId),
+    onUpdate: (cb: (items: AttentionItem[]) => void) => on<[AttentionItem[]]>('attention:update', cb),
+    onOpen: (cb: (sessionId: string) => void) => on<[string]>('attention:open', cb)
   },
 
   // the repositories the app knows about

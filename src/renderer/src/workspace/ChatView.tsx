@@ -10,7 +10,7 @@ import { useQuick } from '../state/quickCommands'
 import { toggleToolRows, useToolRows } from '../state/toolRows'
 import { SlashMenu, useCatalogItems } from './SlashMenu'
 import { Bubble } from './Bubble'
-import { CommandRail } from './CommandRail'
+import { CommandBar, CommandRail } from './CommandRail'
 import { Working } from './Working'
 import { toTurns, verbFor } from './turns'
 import { filterSlash, slashQuery } from './slash'
@@ -158,6 +158,17 @@ export function ChatView({
     setDraft(`/${item.token}${item.hint ? ' ' : ' '}`)
   }
   const [railW, setRailW] = useState(readRail)
+  // the rail is a column when the chat can spare one, and a line across the top when it cannot
+  const [paneW, setPaneW] = useState(0)
+  const pane = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = pane.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => setPaneW(entry.contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const railFits = paneW === 0 || paneW >= 720
   const railFrom = useRef(0)
   // what was attached, so the composer can show pictures instead of a wall of paths. The path still
   // goes into the draft: that is what Claude Code reads, and the user may want to edit around it.
@@ -226,8 +237,9 @@ export function ChatView({
   }
 
   return (
-    <div className="flex h-full min-w-0 bg-[var(--ink)]">
+    <div ref={pane} className="flex h-full min-w-0 bg-[var(--ink)]">
       <div className="flex min-w-0 flex-1 flex-col">
+        {!railFits && !!s.commands.length && <CommandBar list={s.commands} now={now} />}
       <div
         ref={box}
         onScroll={(e) => {
@@ -480,7 +492,7 @@ export function ChatView({
         )}
       </div>
       </div>
-      {!!s.commands.length && (
+      {railFits && !!s.commands.length && (
         <>
           <Divider
             onStart={() => (railFrom.current = railW)}

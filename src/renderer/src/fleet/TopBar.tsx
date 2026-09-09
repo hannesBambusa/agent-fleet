@@ -3,6 +3,7 @@ import { tokens } from '../lib/format'
 import { SCALE_LABELS, SCALES } from '../state/uiScale'
 import { UsageStrip } from './UsageStrip'
 import { ThemeMenu } from './ThemeMenu'
+import { AttentionQueue } from './AttentionQueue'
 import type { Theme } from '../state/theme'
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
   hooksInstalled: boolean | null
   onInstallHooks: () => void
   onNew: () => void
+  onOpen: (sessionId: string) => void
   crumb?: string | null
   onBack?: () => void
   scale: number
@@ -20,7 +22,21 @@ interface Props {
   onTheme: (id: string) => void
 }
 
-export function TopBar({ sessions, hooksInstalled, onInstallHooks, onNew, crumb, onBack, scale, onScale, usage, contextSession, theme, onTheme }: Props): JSX.Element {
+export function TopBar({
+  sessions,
+  hooksInstalled,
+  onInstallHooks,
+  onNew,
+  onOpen,
+  crumb,
+  onBack,
+  scale,
+  onScale,
+  usage,
+  contextSession,
+  theme,
+  onTheme
+}: Props): JSX.Element {
   // the counts that used to sit in a stat row are already on the cards, the rail and the usage tab;
   // only "someone needs you" is worth repeating, because it is the one you must not miss
   const waiting = sessions.filter((s) => s.state === 'waiting').length
@@ -61,6 +77,7 @@ export function TopBar({ sessions, hooksInstalled, onInstallHooks, onNew, crumb,
               </button>
             ))}
           </span>
+          <AttentionQueue onOpen={onOpen} />
           <ThemeMenu theme={theme} onPick={onTheme} />
           <button onClick={onNew} className="chip chip-running hover:brightness-110" title="new agent (⌘N)">
             + new agent

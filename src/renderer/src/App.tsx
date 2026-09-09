@@ -133,6 +133,13 @@ export default function App(): JSX.Element {
     // stopped printing would keep claiming running until some unrelated session happened to update
   }, [all, agents, agentBySession, ptyAt, claims, now])
 
+  // the app announces nothing about the session you are already looking at
+  useEffect(() => {
+    window.api.attention.watching(opened ?? null)
+  }, [opened])
+
+  useEffect(() => window.api.attention.onOpen((id) => open(id)), [open])
+
   // a freshly launched agent opens straight into its terminal
   useEffect(() => {
     const fresh = agents.find((a) => a.status === 'starting' && Date.now() - Date.parse(a.createdAt) < 5000)
@@ -195,6 +202,7 @@ export default function App(): JSX.Element {
         sessions={sessions}
         hooksInstalled={hooks.status ? hooks.status.installed : null}
         onInstallHooks={() => void hooks.install()}
+        onOpen={open}
         onNew={() => setLaunching(true)}
         crumb={current ? (current.topic ?? current.repo) : null}
         onBack={() => setOpened(null)}

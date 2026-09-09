@@ -426,3 +426,21 @@ export interface FileContents {
   binary: boolean
   error: string | null
 }
+
+/** Something that wants a person: an agent blocked on approval, or one that just finished. */
+export interface AttentionItem {
+  id: string
+  sessionId: string
+  kind: 'waiting' | 'done'
+  repo: string
+  title: string
+  at: string
+}
+
+export interface AttentionSettings {
+  onWaiting: boolean
+  onDone: boolean
+  /** ignore sessions started in a terminal, which you are probably already watching */
+  appAgentsOnly: boolean
+  sound: boolean
+}
