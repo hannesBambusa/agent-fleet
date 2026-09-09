@@ -9,6 +9,7 @@ for what it does; this file is how to work on it.
 
 ```bash
 pnpm dev         # electron-vite dev
+pnpm test        # node --test, currently the session state machine
 pnpm typecheck   # both tsconfigs, run before calling anything done
 pnpm build       # out/
 pnpm dist        # release/*.dmg, mac arm64, unsigned
@@ -24,7 +25,7 @@ stale main as `No handler registered for '...'`. Both mean restart, not a bug in
 |---|---|
 | `src/main/sessions/` | JSONL tailer, process liveness, session state |
 | `src/main/agents/` | launch, resume, tmux for detached agents, worktree naming |
-| `src/main/git/` | status, diff, merge, ship, worktree seeding |
+| `src/main/git/` | `exec.ts` primitives, `read.ts` queries, `index.ts` writes, `ship.ts`, `seed.ts` |
 | `src/main/browser/` | one Chromium view per agent, MCP server, CDP tools |
 | `src/main/hooks/` | hook installer, local receiver on 47391 |
 | `src/main/usage/` | rate limits and context, live payload and cache |
@@ -78,11 +79,22 @@ Then restart the app.
 - **Rate limits and context are only live in the status line payload.** `cachedUsageUtilization` in
   `~/.claude.json` is refreshed rarely and is routinely hours stale, whatever the file mtime says.
 - **`pnpm pack` is a built-in pnpm command** and shadows a script of that name. The script is `dist`.
+- **Everything on the `claude` command line goes through `zsh -lc`.** Every argument needs
+  `shellQuote()`, including values that look internal: a session id can come from a filename under
+  `~/.claude/projects`, which any process can write to.
+- **The agent name becomes a directory** under `.claude/worktrees`, so it is slugged before use.
+- **Local servers are reachable from the user's normal browser.** The control server checks a per-run
+  secret and refuses any request carrying `Origin` or `Referer`; keep both guards on anything new.
+- **`belongsTo()` in the agent registry is the only place** that decides whether a transcript belongs
+  to an agent. Three copies of that rule is what made agents appear twice.
 
 ## Verifying changes
 
-There is no test framework here. Main process modules are plain functions, so the way to check one is
-to bundle it and run it against a real or scratch repository:
+`pnpm test` covers `stateOf()` in the session tailer, the function behind every wrong-looking card
+this project has shipped. Add a case there for any state rule you touch; it needs no filesystem.
+
+Everything else in the main process is plain functions, so the way to check one is to bundle it and
+run it against a real or scratch repository:
 
 ```bash
 node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild src/main/git/index.ts \

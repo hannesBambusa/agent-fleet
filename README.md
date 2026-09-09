@@ -50,6 +50,7 @@ rather than the cache in `~/.claude.json`, which is often hours old.
 ```bash
 pnpm install
 pnpm dev
+pnpm test     # the session state machine, node --test
 ```
 
 First run, press **install hooks**. That adds one entry per hook event to `~/.claude/settings.json`
@@ -114,7 +115,7 @@ untracked.
 src/main/          Electron main process
   sessions/        JSONL tailer, liveness, topic lookup
   agents/          launch, resume, tmux for detached agents
-  git/             status, diff, merge, ship, worktree seeding
+  git/             exec (primitives), read (queries), index (writes), ship, seed
   browser/         one Chromium view per agent, MCP server, CDP tools
   hooks/           hook installer and the local receiver
   usage/           rate limits and context, live and cached
@@ -145,6 +146,10 @@ not styled by CSS.
 
 **Agents can be detached.** A detached agent runs inside tmux, so closing the app detaches instead of
 killing it, and reopening reattaches.
+
+**The local servers want a secret.** The browser control server on 47392 only answers requests
+carrying the per-run secret it hands to the MCP shims it spawns, and refuses anything that arrives
+with an `Origin` or `Referer` header, since only a web page sets those.
 
 **Nothing commits or pushes on its own.** Every git action is behind a button you press, and the
 destructive ones ask for a second press.
