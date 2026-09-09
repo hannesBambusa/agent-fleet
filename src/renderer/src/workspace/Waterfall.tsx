@@ -15,23 +15,32 @@ interface Marker {
   command: boolean
 }
 
-/** pair each tool call with the next result; a call with no result yet runs to `now` */
+/**
+ * Pair each tool call with the result carrying its id; a call with no result yet runs to `now`.
+ * Calls issued together are answered together, so the next result belongs to whichever call it
+ * names, not to the one that happens to be open.
+ */
 function spans(items: TranscriptItem[], now: number): Span[] {
   const out: Span[] = []
-  let open: Span | null = null
+  const byToolUseId = new Map<string, Span>()
+  let last: Span | null = null
   for (const it of items) {
     const t = Date.parse(it.ts)
     if (it.kind === 'tool') {
-      if (open) out.push(open)
-      open = { tool: it.tool ?? 'tool', start: t, end: t, text: it.text, open: true }
-    } else if (it.kind === 'result' && open) {
-      open.end = t
-      open.open = false
-      out.push(open)
-      open = null
+      const span: Span = { tool: it.tool ?? 'tool', start: t, end: t, text: it.text, open: true }
+      out.push(span)
+      last = span
+      if (it.toolUseId) byToolUseId.set(it.toolUseId, span)
+    } else if (it.kind === 'result') {
+      // an item parsed before toolUseId existed carries no id, so it closes the most recent call
+      const span = it.toolUseId ? byToolUseId.get(it.toolUseId) : last
+      if (span?.open) {
+        span.end = t
+        span.open = false
+      }
     }
   }
-  if (open) out.push({ ...open, end: now })
+  for (const s of out) if (s.open) s.end = now
   return out
 }
 

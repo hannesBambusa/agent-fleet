@@ -16,6 +16,11 @@ export interface TranscriptItem {
   text: string
   tool?: string
   isError?: boolean
+  // Anthropic's tool_use id: on a `tool` item the call's own id, on a `result` item the id of the
+  // call it answers. Several calls in one assistant message are answered by several results in one
+  // user message, so position cannot pair them. Optional because items already in a running
+  // session's ring were parsed before this field existed.
+  toolUseId?: string
 }
 
 export type SessionOrigin = 'app' | 'terminal' | 'subagent'

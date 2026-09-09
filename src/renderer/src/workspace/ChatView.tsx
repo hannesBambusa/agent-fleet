@@ -28,8 +28,11 @@ function verbFor(seed: number): string {
 }
 
 /** the transcript is a flat log; a chat needs it grouped into turns with tools folded in */
-function toTurns(items: TranscriptItem[]): Turn[] {
+export function toTurns(items: TranscriptItem[]): Turn[] {
   const out: Turn[] = []
+  // every tool call so far, by its tool_use id. Results for a batch of calls all arrive in one user
+  // message and can answer a call from an earlier turn, so the lookup has to outlive `cur`.
+  const byToolUseId = new Map<string, Turn['tools'][number]>()
   let cur: Turn | null = null
   for (const it of items) {
     if (it.kind === 'prompt' || it.kind === 'command') {
@@ -47,12 +50,17 @@ function toTurns(items: TranscriptItem[]): Turn[] {
         cur = { id: it.id, role: 'claude', ts: it.ts, text: '', tools: [] }
         out.push(cur)
       }
-      cur.tools.push({ id: it.id, tool: it.tool ?? 'tool', text: it.text })
+      const call = { id: it.id, tool: it.tool ?? 'tool', text: it.text }
+      cur.tools.push(call)
+      if (it.toolUseId) byToolUseId.set(it.toolUseId, call)
       continue
     }
-    if (it.kind === 'result' && cur?.tools.length) {
-      const last = cur.tools[cur.tools.length - 1]
-      if (!last.result) last.result = it
+    if (it.kind === 'result') {
+      // an item parsed before toolUseId existed carries no id, so it keeps the old last-tool pairing
+      const call = it.toolUseId ? byToolUseId.get(it.toolUseId) : cur?.tools[cur.tools.length - 1]
+      // a result whose call has already fallen out of the transcript ring has nowhere to go, and
+      // hanging it on an unrelated call would show the wrong output under it
+      if (call && !call.result) call.result = it
     }
   }
   return out
@@ -76,19 +84,26 @@ export function ChatView({
   // An echo lives until the same words show up in the transcript. Claude Code rewrites a pasted
   // block on the way in — newlines become spaces, and long text is cut short — so the match is made
   // on collapsed whitespace and a prefix, not on the exact characters.
+  //
+  // It used to expire after 30 seconds as well, which read as the app eating the message: Claude
+  // Code sometimes writes no transcript file at all for minutes while it works, so the echo of a
+  // prompt the pty had already accepted vanished and the chat went blank. The only honest reasons
+  // to drop one are that it landed or that the process is gone; the half hour is a safety valve so
+  // an echo that never matches cannot accumulate through a long session.
   useEffect(() => {
     if (!pending.length) return
     const flat = (t: string): string => t.replace(/\s+/g, ' ').trim()
     const said = s.transcript.filter((i) => i.kind === 'prompt' || i.kind === 'command').map((i) => flat(i.text))
     const now = Date.now()
+    const gone = !!agent && agent.status === 'exited'
     const keep = pending.filter((p) => {
       const mine = flat(p.text)
       const head = mine.slice(0, 60)
       const landed = said.some((t) => t === mine || t.startsWith(head) || mine.startsWith(t.slice(0, 60)))
-      return !landed && now - Date.parse(p.ts) < 30_000
+      return !landed && !gone && now - Date.parse(p.ts) < 30 * 60_000
     })
     if (keep.length !== pending.length) setPending(keep)
-  }, [s.transcript, pending])
+  }, [s.transcript, pending, agent?.status])
   const box = useRef<HTMLDivElement>(null)
   const [stick, setStick] = useState(true)
   useEffect(() => {

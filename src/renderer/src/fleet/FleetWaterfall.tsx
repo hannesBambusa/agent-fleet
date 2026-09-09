@@ -18,19 +18,28 @@ export function FleetWaterfall({ sessions, selected, now, onSelect, onOpen }: Pr
   const rows = useMemo(
     () =>
       sessions.map((s) => {
-        const bars: Array<{ start: number; end: number; tool: string }> = []
-        let open: { start: number; tool: string } | null = null
+        // calls issued together are answered together, so a result closes the call it names rather
+        // than whichever bar is still open
+        const bars: Array<{ start: number; end: number; tool: string; open: boolean }> = []
+        const byToolUseId = new Map<string, (typeof bars)[number]>()
+        let last: (typeof bars)[number] | null = null
         for (const it of s.transcript) {
           const t = Date.parse(it.ts)
           if (it.kind === 'tool') {
-            if (open) bars.push({ ...open, end: t })
-            open = { start: t, tool: it.tool ?? 'tool' }
-          } else if (it.kind === 'result' && open) {
-            bars.push({ ...open, end: t })
-            open = null
+            const bar = { start: t, end: t, tool: it.tool ?? 'tool', open: true }
+            bars.push(bar)
+            last = bar
+            if (it.toolUseId) byToolUseId.set(it.toolUseId, bar)
+          } else if (it.kind === 'result') {
+            // an item parsed before toolUseId existed carries no id, so it closes the most recent call
+            const bar = it.toolUseId ? byToolUseId.get(it.toolUseId) : last
+            if (bar?.open) {
+              bar.end = t
+              bar.open = false
+            }
           }
         }
-        if (open) bars.push({ ...open, end: now })
+        for (const b of bars) if (b.open) b.end = now
         return { s, bars: bars.filter((b) => b.end >= t0) }
       }),
     [sessions, now, t0]
