@@ -69,6 +69,23 @@ function browserMcpConfig(agentId: string): string {
   })
 }
 
+/**
+ * Does this transcript belong to this agent?
+ *
+ * The one definition of that question. It used to be answered independently wherever it came up —
+ * once when adopting an unclaimed session, once when resuming the newest one — with rules that were
+ * close but not identical, which is how an agent ended up showing twice or resuming a conversation
+ * that was not its own. Matching on the agent's *own* worktree rather than any worktree of the repo
+ * also stops two agents in one repository claiming each other's sessions.
+ */
+export function belongsTo(a: Agent, s: { cwd: string; parentId?: string | null }): boolean {
+  if (s.parentId) return false
+  // once the agent's home is known it is the whole answer; anything else is a different session
+  if (a.cwd) return s.cwd === a.cwd
+  if (s.cwd === a.repoPath) return true
+  return a.worktree && s.cwd === join(a.repoPath, '.claude', 'worktrees', a.name)
+}
+
 export class AgentRegistry extends EventEmitter {
   private agents = new Map<string, Agent>()
   private wasLive = new Set<string>()

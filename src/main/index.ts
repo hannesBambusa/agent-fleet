@@ -5,7 +5,7 @@ import { Tailer } from './sessions/tailer'
 import { startHookServer } from './hooks/server'
 import { hookStatus, installHooks, uninstallHooks } from './hooks/installer'
 import { PtyManager } from './pty/manager'
-import { AgentRegistry } from './agents/registry'
+import { AgentRegistry, belongsTo } from './agents/registry'
 import { execFile } from 'node:child_process'
 import { RepoRegistry } from './repos/registry'
 import { BrowserManager, type Bounds } from './browser/manager'
@@ -107,7 +107,7 @@ function resumeLatest(id: string, cols: number, rows: number): Agent | undefined
   if (!a) return undefined
   const newest = tailer
     .list()
-    .filter((s) => !s.parentId && (s.cwd === a.cwd || s.cwd === a.repoPath))
+    .filter((s) => belongsTo(a, s))
     .sort((x, y) => (y.lastEventAt ?? '').localeCompare(x.lastEventAt ?? ''))[0]
   if (newest && newest.id !== a.sessionId) agents.rebind(a.id, newest.id, newest.cwd)
   return agents.resume(id, cols, rows)
@@ -207,7 +207,7 @@ void app.whenReady().then(() => {
         (a) =>
           a.status !== 'exited' &&
           !tailer.get(a.sessionId) &&
-          (s.cwd === a.cwd || s.cwd === a.repoPath || s.cwd.startsWith(`${a.repoPath}/.claude/worktrees/`)) &&
+          belongsTo(a, s) &&
           Date.parse(s.firstEventAt!) >= Date.parse(a.createdAt) - 10_000
       )
       if (orphan) agents.rebind(orphan.id, s.id, s.cwd)
