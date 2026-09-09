@@ -18,6 +18,14 @@ interface Selection {
   base?: string
 }
 
+// the tab keys are what the code switches on; these are what they are called on screen
+const TAB_LABEL: Record<string, string> = {
+  changes: 'changes',
+  ship: 'ship',
+  history: 'commit graph',
+  branches: 'branches'
+}
+
 const letterColor: Record<string, string> = {
   M: 'text-[#e0af68]',
   A: 'text-[#8bf0bd]',
@@ -399,7 +407,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
               tab === t ? 'border-[var(--accent)] !text-[var(--fg)]' : 'border-transparent hover:!text-[var(--muted)]'
             }`}
           >
-            {t}
+            {TAB_LABEL[t] ?? t}
           </button>
         ))}
         {tab === 'changes' && !!counts.unstaged && (
