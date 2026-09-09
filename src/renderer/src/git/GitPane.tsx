@@ -6,6 +6,7 @@ import { Branches } from './Branches'
 import { ShipPane } from './ShipPane'
 import { SeedBand } from './SeedBand'
 import { age } from '../lib/format'
+import { usePersistedOneOf } from '../state/persist'
 
 const POLL_MS = 3000
 // the plans cost a patch build and a dry-run apply, so they move on their own, slower clock
@@ -38,7 +39,7 @@ const letterColor: Record<string, string> = {
 
 export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): JSX.Element {
   // a worktree agent usually needs to look at both: its own tree, and the checkout it merges into
-  const [target, setTarget] = useState<'worktree' | 'repo'>('worktree')
+  const [target, setTarget] = usePersistedOneOf<'worktree' | 'repo'>('gitTarget', ['worktree', 'repo'], 'worktree')
   const isWorktree = repoPath !== cwd
   const view = target === 'repo' && isWorktree ? repoPath : cwd
   const [message, setMessage] = useState('')
@@ -48,7 +49,11 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
   const [sel, setSel] = useState<Selection | null>(null)
   const [diff, setDiff] = useState('')
   const seq = useRef(0)
-  const [tab, setTab] = useState<'changes' | 'ship' | 'history' | 'branches'>('changes')
+  const [tab, setTab] = usePersistedOneOf<'changes' | 'ship' | 'history' | 'branches'>(
+    'gitTab',
+    ['changes', 'ship', 'history', 'branches'],
+    'changes'
+  )
   const [confirmPush, setConfirmPush] = useState(false)
   const [pushing, setPushing] = useState(false)
   // outcome of the last action: red only when it actually failed

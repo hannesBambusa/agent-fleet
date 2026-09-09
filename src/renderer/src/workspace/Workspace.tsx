@@ -6,6 +6,7 @@ import { Terminal, termSize } from '../terminal/Terminal'
 import { ChatView } from './ChatView'
 import { RightPanel } from './RightPanel'
 import { Divider } from '../lib/Divider'
+import { usePersisted } from '../state/persist'
 
 const label: Record<Session['state'], string> = {
   running: 'running',
@@ -52,13 +53,17 @@ function readBrowserWidth(): number {
 }
 
 export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent | null; now: number }): JSX.Element {
+  // Not persisted on purpose: every agent records how it was launched, and the effect below applies
+  // that on open. A remembered view would be overwritten a frame later, which is worse than no
+  // memory at all.
   const [view, setView] = useState<View>('chat')
   // each agent remembers how it was launched; opening another one honours its own choice
   useEffect(() => {
     if (!agent) return
     setView(agent.chat === false ? 'terminal' : 'chat')
   }, [agent?.id, agent?.chat])
-  const [browserOn, setBrowserOn] = useState(true)
+  // whether the right panel is showing at all, which is a working preference rather than a per-agent one
+  const [browserOn, setBrowserOn] = usePersisted<boolean>('rightPanelOpen', true)
   const [browserWidth, setBrowserWidth] = useState(readBrowserWidth)
   const [timelineH, setTimelineH] = useState(readTimelineHeight)
   const ref = useRef<HTMLDivElement>(null)

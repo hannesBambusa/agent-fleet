@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { usePersistedOneOf } from '../state/persist'
 import type { Session, UsageSnapshot } from '../../../shared/types'
 import { applyFilter, emptyFilter, Filters, type FilterState, type FleetTab } from './Filters'
 import { Canvas } from './Canvas'
@@ -57,9 +58,13 @@ export function FleetView({
   opened,
   onExpand
 }: Props): JSX.Element {
-  const [section, setSection] = useState<Section>('fleet')
+  const [section, setSection] = usePersistedOneOf<Section>(
+    'fleetSection',
+    SECTIONS.map((t) => t.id),
+    'fleet'
+  )
   const [filter, setFilter] = useState<FilterState>(emptyFilter)
-  const [view, setView] = useState<FleetTab>('graph')
+  const [view, setView] = usePersistedOneOf<FleetTab>('fleetView', ['graph', 'waterfall', 'history'], 'graph')
   const shown = useMemo(() => applyFilter(sessions, filter), [sessions, filter])
 
   return (

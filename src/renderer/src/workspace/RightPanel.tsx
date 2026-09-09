@@ -3,6 +3,7 @@ import type { Agent, Session } from '../../../shared/types'
 import { BrowserPane } from '../browser/BrowserPane'
 import { GitPane } from '../git/GitPane'
 import { onOpenLink } from '../state/openLink'
+import { usePersistedOneOf } from '../state/persist'
 import { Commands } from './Commands'
 
 type Tab = 'browser' | 'git' | 'commands'
@@ -10,7 +11,9 @@ type Tab = 'browser' | 'git' | 'commands'
 // the browser is a native view, so only one of these may be mounted at a time: unmounting the
 // browser pane is what parks its Chromium view out of the way
 export function RightPanel({ s, agent }: { s: Session; agent: Agent | null }): JSX.Element {
-  const [tab, setTab] = useState<Tab>(agent?.browser ? 'browser' : 'git')
+  // the pane you last worked in, except that an agent without a browser cannot show one
+  const [saved, setTab] = usePersistedOneOf<Tab>('rightPanelTab', ['browser', 'git', 'commands'], 'git')
+  const tab: Tab = saved === 'browser' && agent && !agent.browser ? 'git' : saved
 
   // a link clicked in the chat lands here: show the browser, then send it there. Navigating first
   // would load the page into a view that is still parked at 1x1 and paints nothing.

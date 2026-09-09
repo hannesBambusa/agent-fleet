@@ -7,6 +7,7 @@ import { ApprovalCard } from './Approval'
 import { termSize } from '../terminal/Terminal'
 import { Divider } from '../lib/Divider'
 import { useQuick } from '../state/quickCommands'
+import { toggleToolRows, useToolRows } from '../state/toolRows'
 import { SlashMenu, useCatalogItems } from './SlashMenu'
 import { filterSlash, slashQuery } from './slash'
 import { annotate, collapse, lineDiff, summarise } from '../lib/lineDiff'
@@ -188,6 +189,7 @@ export function ChatView({
    * the user can say what they want done with it before sending.
    */
   const [attaching, setAttaching] = useState(false)
+  const openTools = useToolRows()
   // the slash menu: open whenever the draft is still just the command being typed
   const slashAll = useCatalogItems()
   const [slashAt, setSlashAt] = useState(0)
@@ -287,7 +289,7 @@ export function ChatView({
         className="select min-h-0 flex-1 overflow-auto px-5 py-4"
       >
         {turns.map((t) => (
-          <Bubble key={t.id} t={t} agentId={agent?.id ?? null} />
+          <Bubble key={t.id} t={t} agentId={agent?.id ?? null} openTools={openTools} />
         ))}
         {!turns.length && !busy && !starting && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--dim)]">
@@ -300,6 +302,7 @@ export function ChatView({
             key={p.id}
             t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }}
             agentId={agent?.id ?? null}
+            openTools={openTools}
           />
         ))}
         {(waiting || empty) && agent && (
@@ -455,7 +458,34 @@ export function ChatView({
                   + browser shot
                 </button>
               )}
-              <span className="lbl ml-auto">typed straight into the session</span>
+              <button
+                onClick={toggleToolRows}
+                role="switch"
+                aria-checked={openTools}
+                title={
+                  openTools
+                    ? 'on: every diff and command output is shown without clicking'
+                    : 'off: tool calls stay collapsed until you open one'
+                }
+                className="ml-auto flex items-center gap-1.5 hover:opacity-90"
+              >
+                <span className="lbl">auto-expand tool calls</span>
+                <span
+                  className="relative block h-[13px] w-[24px] rounded-full transition-colors"
+                  style={{
+                    background: openTools ? 'var(--accent)' : 'var(--raised)',
+                    boxShadow: openTools ? 'none' : 'inset 0 0 0 1px var(--line)'
+                  }}
+                >
+                  <span
+                    className="absolute top-[2px] block h-[9px] w-[9px] rounded-full transition-all"
+                    style={{
+                      left: openTools ? '13px' : '2px',
+                      background: openTools ? 'var(--ink)' : 'var(--muted)'
+                    }}
+                  />
+                </span>
+              </button>
               <button
                 onClick={() => send()}
                 disabled={!draft.trim()}
@@ -644,7 +674,7 @@ function Dot({ delay }: { delay: number }): JSX.Element {
   )
 }
 
-function Bubble({ t, agentId }: { t: Turn; agentId: string | null }): JSX.Element {
+function Bubble({ t, agentId, openTools }: { t: Turn; agentId: string | null; openTools: boolean }): JSX.Element {
   if (t.role === 'you') {
     return (
       <div className="mb-4 flex justify-end">
@@ -670,7 +700,7 @@ function Bubble({ t, agentId }: { t: Turn; agentId: string | null }): JSX.Elemen
         </div>
       )}
       {t.tools.map((tool) => (
-        <ToolLine key={tool.id} tool={tool} />
+        <ToolLine key={tool.id} tool={tool} startOpen={openTools} />
       ))}
     </div>
   )
@@ -705,11 +735,17 @@ function kindOf(tool: string): { tone: string; glyph: string; label: string } {
 }
 
 function ToolLine({
-  tool
+  tool,
+  startOpen
 }: {
   tool: { tool: string; text: string; result?: TranscriptItem; edit?: TranscriptEdit }
+  startOpen: boolean
 }): JSX.Element {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(startOpen)
+  // flipping the default re-opens or closes every row, including ones already touched by hand
+  useEffect(() => {
+    setOpen(startOpen)
+  }, [startOpen])
   const err = tool.result?.isError
   const kind = kindOf(tool.tool)
   // a file edit is what actually happened; its output is usually just "ok"
