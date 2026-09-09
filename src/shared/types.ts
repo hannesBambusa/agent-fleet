@@ -256,6 +256,8 @@ export interface ApplyPlan {
   at: string | null
   /** uncommitted files already in the target, which the applied changes will sit beside */
   dirtyTarget: number
+  /** files dirty in the target checkout that this patch also rewrites: applying would mix the two */
+  overlaps: string[]
 }
 
 /** One line of the ship checklist: what will happen, or why it cannot. */

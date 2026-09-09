@@ -267,7 +267,8 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
             disabled={applying}
             title={
               aplan.ok
-                ? `copy ${aplan.files} changed file(s)${aplan.untracked ? ` and ${aplan.untracked} new file(s)` : ''} into ${aplan.at}, uncommitted`
+                ? `copy ${aplan.files} changed file(s)${aplan.untracked ? ` and ${aplan.untracked} new file(s)` : ''} into ${aplan.at}, uncommitted` +
+                  (aplan.dirtyTarget ? ` · ${aplan.into} already has ${aplan.dirtyTarget} uncommitted file(s), none of them touched by this patch` : '')
                 : (aplan.reason ?? '')
             }
             className={`chip shrink-0 ${confirmApply ? 'chip-waiting' : aplan.ok ? 'chip-running' : 'chip-idle'} hover:brightness-110 disabled:opacity-40`}

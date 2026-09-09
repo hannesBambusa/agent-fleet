@@ -376,7 +376,17 @@ async function untrackedFiles(cwd: string): Promise<string[]> {
 export async function applyPlan(cwd: string): Promise<ApplyPlan> {
   const branch = (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   const base = (await baseOf(cwd, branch)) ?? ''
-  const plan: ApplyPlan = { ok: false, reason: null, branch, into: base, files: 0, untracked: 0, at: null, dirtyTarget: 0 }
+  const plan: ApplyPlan = {
+    ok: false,
+    reason: null,
+    branch,
+    into: base,
+    files: 0,
+    untracked: 0,
+    at: null,
+    dirtyTarget: 0,
+    overlaps: []
+  }
   if (!base) {
     plan.reason = 'no base branch to compare against'
     return plan
@@ -398,7 +408,27 @@ export async function applyPlan(cwd: string): Promise<ApplyPlan> {
     return plan
   }
 
-  plan.dirtyTarget = (await git(host.path, ['status', '--porcelain', '-uno'])).split('\n').filter(Boolean).length
+  // The target checkout usually has unrelated work in it, and applying alongside that is the normal
+  // case. What is not safe is applying *over* it: a file the patch rewrites that also holds edits of
+  // the user's own has no way back, since neither version is committed anywhere. Refuse only that.
+  const dirty = (await git(host.path, ['status', '--porcelain', '-uno']))
+    .split('\n')
+    .filter((l) => l.length > 3)
+    .map((l) => l.slice(3))
+  plan.dirtyTarget = dirty.length
+  const touched = new Set(
+    patch
+      .split('\n')
+      .filter((l) => l.startsWith('diff --git '))
+      .map((l) => l.replace(/^diff --git a\/(.+?) b\/.*$/, '$1'))
+  )
+  plan.overlaps = dirty.filter((f) => touched.has(f))
+  if (plan.overlaps.length) {
+    plan.reason =
+      `${plan.overlaps.length} file(s) have uncommitted changes in ${base} that this patch also ` +
+      `rewrites, and neither version is committed: ${plan.overlaps.slice(0, 4).join(', ')}`
+    return plan
+  }
 
   if (patch.trim()) {
     // ask git whether the patch lands before touching anything
