@@ -252,10 +252,14 @@ export class Tailer extends EventEmitter {
     const closedRoots = new Set<string>()
     for (const [cwd, list] of groups) {
       const alive = this.live.countFor(cwd)
+      // No process at all where a session was writing minutes ago is a scan that missed it, not a
+      // directory that emptied. `closed` is the one verdict nothing downstream can overturn, so on
+      // an answer this suspect the whole directory is left alone, as an unknown scan already is.
+      const blind = alive === 0 && list.some((s) => s.lastEventAt !== null && now - Date.parse(s.lastEventAt) < STALE_MS)
       list.sort((a, b) => (b.lastEventAt ?? '').localeCompare(a.lastEventAt ?? ''))
       list.forEach((s, i) => {
         const fresh = s.lastEventAt ? now - Date.parse(s.lastEventAt) < GRACE_MS : false
-        s.closed = i >= alive && !fresh && !this.owned.has(s.id)
+        s.closed = !blind && i >= alive && !fresh && !this.owned.has(s.id)
         if (s.closed) closedRoots.add(s.id)
       })
     }
@@ -297,8 +301,12 @@ export function stateOf(s: Session, now: number): { state: SessionState; clearTo
     if (h === 'idle' && said < HOOK_IDLE_MS) {
       return { state: age > STALE_MS ? 'stale' : 'idle', clearTool: false }
     }
+    // a permission prompt stays true until a tool hook contradicts it, so it keeps idle's window:
+    // on the short one it expired mid-prompt and the transcript's open tool call reported running,
+    // telling the user an agent is busy when it is in fact blocked on them
+    if (h === 'waiting' && said < HOOK_IDLE_MS) return { state: 'waiting', clearTool: false }
     // a stale "running" claim is worse than no claim: it pins a finished agent green forever
-    if ((h === 'running' || h === 'waiting') && said < HOOK_RUN_MS) return { state: h, clearTool: false }
+    if (h === 'running' && said < HOOK_RUN_MS) return { state: 'running', clearTool: false }
   }
 
   if (age > STALE_MS) return { state: 'stale', clearTool: false }

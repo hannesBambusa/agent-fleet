@@ -104,10 +104,23 @@ test('a hook claim of running wins, but only while it is fresh', () => {
   assert.equal(state({ hookState: claim(5 * SECOND), transcript: [] }), 'running')
   // a stale claim pins a finished agent green forever, so it expires
   assert.equal(state({ hookState: claim(2 * MINUTE), transcript: [] }), 'idle')
+  // and it expires on the short window, just past it, not on idle's ten minutes
+  assert.equal(state({ hookState: claim(46 * SECOND), transcript: [] }), 'idle')
 })
 
 test('a hook claim of waiting is kept, since only a hook can know it', () => {
   assert.equal(state({ hookState: { state: 'waiting', at: ago(SECOND) }, transcript: [] }), 'waiting')
+})
+
+test('a hook claim of waiting outlives the short running window', () => {
+  // a permission prompt is true until a tool hook contradicts it. On the 45 s window it expired
+  // while the prompt was still on screen, the open tool call below took over, and the card went
+  // green for ten minutes with the agent in fact blocked on the user.
+  const claim = (agoMs) => ({ state: 'waiting', at: ago(agoMs) })
+  // the tool call the prompt is asking about, still open with nothing written since
+  const open = { lastEventAt: ago(6 * MINUTE), transcript: [item('tool', 6 * MINUTE)] }
+  assert.equal(state({ ...open, hookState: claim(46 * SECOND) }), 'waiting')
+  assert.equal(state({ ...open, hookState: claim(5 * MINUTE) }), 'waiting')
 })
 
 test('a hook claim of idle beats an open tool call', () => {

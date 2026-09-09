@@ -1,10 +1,36 @@
 import { execFile } from 'node:child_process'
+import { basename } from 'node:path'
 
 const REFRESH_MS = 4000
+
+// The plumbing that runs under the same name as a session: the background daemon, a pty host, a
+// spare pty waiting to be claimed, and a client attached to a session running somewhere else.
+// Counting any of them as a session inflates a directory's live count and keeps dead cards on screen.
+const HELPER_ARGS = new Set(['daemon', 'attach', 'bg-pty-host', 'bg-spare', '--bg-pty-host', '--bg-spare'])
 
 interface Run {
   ok: boolean
   out: string
+}
+
+/**
+ * The pid in one `pgrep -fl` line, if that line is a `claude` process actually running a session.
+ *
+ * The launcher picks argv[0], so a name match cannot see all of them: agents this app starts get a
+ * bare `claude`, `~/.local/bin/claude` is the entrypoint script, and a session started from a
+ * terminal ends up on the versioned binary under `~/.local/share/claude/versions/<version>`, whose
+ * process name is a version number. Hence the executable is judged by path.
+ *
+ * The helpers are dropped on their first argument alone, which is the only place the marker can be
+ * trusted: a pty host repeats the versioned binary path after a `--`, and text handed to
+ * `--append-system-prompt` can contain any of these words by chance.
+ */
+function sessionPid(line: string): string | null {
+  const [pid, exe, arg] = line.trim().split(/\s+/, 3)
+  if (!pid || !exe) return null
+  if (basename(exe) !== 'claude' && !exe.includes('/share/claude/versions/')) return null
+  if (arg && HELPER_ARGS.has(arg)) return null
+  return pid
 }
 
 // pgrep exits 1 when it simply matched nothing, which is a real answer rather than a failure
@@ -57,9 +83,9 @@ export class Liveness {
     try {
       // 1 = no process matched. Anything else means the scan failed, and a failed scan must never
       // be read as "nothing is running": that would un-hide every closed session at once.
-      const res = await sh('pgrep', ['-x', 'claude'], [1])
+      const res = await sh('pgrep', ['-fl', 'claude'], [1])
       if (!res.ok) return
-      const pids = res.out.split('\n').map((l) => l.trim()).filter(Boolean)
+      const pids = res.out.split('\n').map(sessionPid).filter((p): p is string => p !== null)
       if (!pids.length) {
         this.byCwd = new Map()
         this.scanned = true
