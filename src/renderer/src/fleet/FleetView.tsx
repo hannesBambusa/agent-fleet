@@ -6,6 +6,7 @@ import { FleetWaterfall } from './FleetWaterfall'
 import { FleetHistory } from './FleetHistory'
 import { FleetUsage } from './FleetUsage'
 import { Catalog } from './Catalog'
+import { McpPane } from './McpPane'
 import { Rail } from './Rail'
 
 interface Props {
@@ -33,13 +34,14 @@ interface Props {
  * they are drawn in. Folding those into one row made "usage" and "waterfall" look like the same kind
  * of choice, which they are not.
  */
-type Section = 'fleet' | 'skills' | 'commands' | 'agents' | 'usage'
+type Section = 'fleet' | 'skills' | 'commands' | 'agents' | 'mcp' | 'usage'
 
 const SECTIONS: Array<{ id: Section; label: string; title: string }> = [
   { id: 'fleet', label: 'fleet', title: 'the sessions running right now' },
   { id: 'skills', label: 'skills', title: 'every skill installed for Claude Code' },
   { id: 'commands', label: 'commands', title: 'every slash command available' },
   { id: 'agents', label: 'agents', title: 'every subagent definition' },
+  { id: 'mcp', label: 'mcp', title: 'the MCP servers Claude Code can reach, and what is using them' },
   { id: 'usage', label: 'usage', title: 'tokens and plan limits' }
 ]
 
@@ -101,6 +103,8 @@ export function FleetView({
           <Catalog kind="command" />
         ) : section === 'agents' ? (
           <Catalog kind="agent" />
+        ) : section === 'mcp' ? (
+          <McpPane sessions={history} now={now} />
         ) : compact ? (
           <Rail sessions={sessions} opened={opened} now={now} onOpen={onOpen} onFleet={onExpand} />
         ) : view === 'graph' ? (

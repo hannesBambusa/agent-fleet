@@ -3,7 +3,7 @@ import type { CatalogItem, CatalogKind } from '../../../shared/types'
 import { normalise, toggleQuick, useQuick } from '../state/quickCommands'
 
 const SOURCE_TONE: Record<CatalogItem['source'], { label: string; color: string }> = {
-  user: { label: 'yours', color: 'var(--accent)' },
+  user: { label: 'global', color: 'var(--accent)' },
   plugin: { label: 'plugin', color: 'var(--sub)' },
   project: { label: 'project', color: 'var(--warn)' }
 }
@@ -43,11 +43,12 @@ export function Catalog({ kind }: { kind: CatalogKind }): JSX.Element {
   const groups = useMemo(() => {
     const map = new Map<string, CatalogItem[]>()
     for (const i of list) {
-      const key = i.source === 'user' ? 'yours' : `${i.source} · ${i.origin}`
+      // user scope is ~/.claude, which every project sees, so it reads as global rather than as a source
+      const key = i.source === 'user' ? 'global' : `${i.source} · ${i.origin}`
       map.set(key, [...(map.get(key) ?? []), i])
     }
-    // your own first, then plugins, then projects, each alphabetically
-    return [...map.entries()].sort((a, b) => (a[0] === 'yours' ? -1 : b[0] === 'yours' ? 1 : a[0].localeCompare(b[0])))
+    // global first, then plugins, then projects, each alphabetically
+    return [...map.entries()].sort((a, b) => (a[0] === 'global' ? -1 : b[0] === 'global' ? 1 : a[0].localeCompare(b[0])))
   }, [list])
 
   if (!all) {

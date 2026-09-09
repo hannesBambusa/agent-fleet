@@ -147,7 +147,7 @@ function repoRoot(path: string): string {
 }
 
 export function catalog(repoPaths: string[]): CatalogItem[] {
-  const out = [...allIn(CLAUDE, 'user', 'you')]
+  const out = [...allIn(CLAUDE, 'user', 'global')]
   for (const p of pluginRoots()) out.push(...allIn(p.root, 'plugin', p.name))
   // several worktrees of one repository would otherwise list its skills once each
   for (const repo of [...new Set(repoPaths.map(repoRoot))]) {

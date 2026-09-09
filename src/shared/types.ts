@@ -388,3 +388,22 @@ export interface CatalogItem {
   userOnly: boolean
   at: string | null
 }
+
+/** An MCP server Claude Code can reach, wherever it is configured. */
+export interface McpServer {
+  name: string
+  /**
+   * Your own config, a project's, a plugin's, claude.ai's connectors, or this app's. `in use` is the
+   * one that is not read from a file: a server no config here mentions, found because a session
+   * called its tools, which is how the Claude in Chrome extension shows up.
+   */
+  scope: 'user' | 'project' | 'plugin' | 'claude.ai' | 'app' | 'in use'
+  origin: string
+  transport: 'stdio' | 'http' | 'sse' | 'managed'
+  /** what gets spawned, for a local server */
+  command: string | null
+  url: string | null
+  enabled: boolean
+  /** the file it is configured in, when there is one */
+  path: string | null
+}

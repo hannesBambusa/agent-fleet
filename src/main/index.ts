@@ -33,6 +33,7 @@ import {
 } from './git'
 import { usage } from './usage'
 import { catalog } from './catalog'
+import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
 import { seedApply, seedPlan } from './git/seed'
 import type { Agent, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
@@ -123,6 +124,7 @@ function wireIpc(): void {
   ipcMain.handle('hooks:uninstall', () => uninstallHooks())
 
   ipcMain.handle('catalog:list', () => catalog(repos.list().map((r) => r.path)))
+  ipcMain.handle('catalog:mcp', () => mcpServers(repos.list().map((r) => r.path)))
   ipcMain.handle('repos:list', (): Repo[] => repos.list())
   ipcMain.handle('repos:upsert', (_, r: Repo): Repo => repos.upsert(r))
   ipcMain.handle('repos:remove', (_, path: string) => repos.remove(path))

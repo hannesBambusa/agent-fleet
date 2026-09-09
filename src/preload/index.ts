@@ -16,6 +16,7 @@ import type {
   HookEvent,
   HookStatus,
   LaunchRequest,
+  McpServer,
   Repo,
   SeedItem,
   SeedPlan,
@@ -39,6 +40,7 @@ const api = {
   uninstallHooks: (): Promise<HookStatus> => ipcRenderer.invoke('hooks:uninstall'),
 
   catalog: (): Promise<CatalogItem[]> => ipcRenderer.invoke('catalog:list'),
+  mcpServers: (): Promise<McpServer[]> => ipcRenderer.invoke('catalog:mcp'),
   listRepos: (): Promise<Repo[]> => ipcRenderer.invoke('repos:list'),
   upsertRepo: (r: Repo): Promise<Repo> => ipcRenderer.invoke('repos:upsert', r),
   removeRepo: (path: string): Promise<void> => ipcRenderer.invoke('repos:remove', path),

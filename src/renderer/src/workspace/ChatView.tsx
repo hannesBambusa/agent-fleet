@@ -7,6 +7,8 @@ import { ApprovalCard } from './Approval'
 import { termSize } from '../terminal/Terminal'
 import { Divider } from '../lib/Divider'
 import { useQuick } from '../state/quickCommands'
+import { SlashMenu, useCatalogItems } from './SlashMenu'
+import { filterSlash, slashQuery } from './slash'
 import { annotate, collapse, lineDiff, summarise } from '../lib/lineDiff'
 import { highlight, langOf, type Token } from '../lib/highlight'
 
@@ -186,6 +188,29 @@ export function ChatView({
    * the user can say what they want done with it before sending.
    */
   const [attaching, setAttaching] = useState(false)
+  // the slash menu: open whenever the draft is still just the command being typed
+  const slashAll = useCatalogItems()
+  const [slashAt, setSlashAt] = useState(0)
+  // counts keyboard moves only, so the menu knows when to scroll and when to hold still
+  const [slashKeyed, setSlashKeyed] = useState(0)
+  const moveSlash = (step: number): void => {
+    setSlashAt((i) => (i + step + slashList.length) % slashList.length)
+    setSlashKeyed((n) => n + 1)
+  }
+  const query = slashQuery(draft)
+  const slashList = useMemo(() => (query === null ? [] : filterSlash(slashAll, query)), [slashAll, query])
+  const slashOpen = query !== null && slashList.length > 0
+  useEffect(() => {
+    setSlashAt(0)
+    setSlashKeyed(0)
+  }, [query])
+
+  function pickSlash(index = slashAt): void {
+    const item = slashList[Math.min(index, slashList.length - 1)]
+    if (!item) return
+    // a command that takes something keeps the composer open; one that does not is ready to send
+    setDraft(`/${item.token}${item.hint ? ' ' : ' '}`)
+  }
   const [railW, setRailW] = useState(readRail)
   const railFrom = useRef(0)
   // what was attached, so the composer can show pictures instead of a wall of paths. The path still
@@ -320,6 +345,15 @@ export function ChatView({
               /clear
             </button>
           </div>
+          {slashOpen && (
+            <SlashMenu
+              items={slashList}
+              index={slashAt}
+              keyed={slashKeyed}
+              onPick={(it) => pickSlash(slashList.indexOf(it))}
+              onHover={setSlashAt}
+            />
+          )}
           <div className="rounded-md border border-[var(--line)] bg-[var(--panel)] focus-within:border-[var(--accent)]">
             {!!shots.length && (
               <div className="flex flex-wrap gap-2 px-3 pt-2.5">
@@ -364,6 +398,28 @@ export function ChatView({
                 void attachFile(image)
               }}
               onKeyDown={(e) => {
+                if (slashOpen) {
+                  if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+                    e.preventDefault()
+                    moveSlash(1)
+                    return
+                  }
+                  if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+                    e.preventDefault()
+                    moveSlash(-1)
+                    return
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    pickSlash()
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setDraft('')
+                    return
+                  }
+                }
                 if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
                   e.preventDefault()
                   send()
