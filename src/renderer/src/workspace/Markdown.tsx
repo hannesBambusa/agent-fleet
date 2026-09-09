@@ -1,13 +1,14 @@
 import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { openLink } from '../state/openLink'
 
 /**
  * Claude writes markdown, so the chat renders markdown. Everything is styled from the app's tokens
  * rather than a stylesheet, and long paths and code are allowed to wrap instead of stretching the
  * pane, since a chat column is narrow and full of absolute paths.
  */
-export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.Element {
+export const Markdown = memo(function Markdown({ text, agentId }: { text: string; agentId?: string | null }): JSX.Element {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -19,10 +20,13 @@ export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.
           <a
             href={href}
             title={href}
-            // the app is not a browser: a link belongs in the user's own browser
+            // the agent has a browser of its own, and that is where its links belong; holding a
+            // modifier sends it out to the system browser instead
             onClick={(e) => {
               e.preventDefault()
-              if (href) void window.api.openExternal(href)
+              if (!href) return
+              if (e.metaKey || e.shiftKey) void window.api.openExternal(href)
+              else openLink(href, agentId ?? null)
             }}
             className="cursor-pointer text-[var(--accent)] underline decoration-[var(--accent)]/40 hover:decoration-[var(--accent)]"
           >

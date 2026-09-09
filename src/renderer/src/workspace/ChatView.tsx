@@ -190,7 +190,7 @@ export function ChatView({
         className="select min-h-0 flex-1 overflow-auto px-5 py-4"
       >
         {turns.map((t) => (
-          <Bubble key={t.id} t={t} />
+          <Bubble key={t.id} t={t} agentId={agent?.id ?? null} />
         ))}
         {!turns.length && !busy && !starting && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--dim)]">
@@ -199,7 +199,11 @@ export function ChatView({
           </div>
         )}
         {pending.map((p) => (
-          <Bubble key={p.id} t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }} />
+          <Bubble
+            key={p.id}
+            t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }}
+            agentId={agent?.id ?? null}
+          />
         ))}
         {(waiting || empty) && agent && (
           <ApprovalCard agentId={agent.id} quiet={!waiting} onOpenTerminal={onOpenTerminal} />
@@ -381,7 +385,7 @@ function Dot({ delay }: { delay: number }): JSX.Element {
   )
 }
 
-function Bubble({ t }: { t: Turn }): JSX.Element {
+function Bubble({ t, agentId }: { t: Turn; agentId: string | null }): JSX.Element {
   if (t.role === 'you') {
     return (
       <div className="mb-4 flex justify-end">
@@ -391,7 +395,7 @@ function Bubble({ t }: { t: Turn }): JSX.Element {
             <div className="mono text-[12px] text-[var(--fg)]">{t.text}</div>
           ) : (
             <div className="select text-[12.5px] leading-relaxed">
-              <Markdown text={t.text} />
+              <Markdown text={t.text} agentId={agentId} />
             </div>
           )}
         </div>
@@ -403,7 +407,7 @@ function Bubble({ t }: { t: Turn }): JSX.Element {
       <div className="mono mb-1 text-[9px] uppercase tracking-widest text-[var(--dim)]">claude · {clock(t.ts)}</div>
       {t.text && (
         <div className="select text-[12.5px] leading-relaxed text-[var(--fg)]/90">
-          <Markdown text={t.text} />
+          <Markdown text={t.text} agentId={agentId} />
         </div>
       )}
       {t.tools.map((tool) => (
