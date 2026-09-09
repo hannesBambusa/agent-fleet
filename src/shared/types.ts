@@ -21,6 +21,18 @@ export interface TranscriptItem {
   // user message, so position cannot pair them. Optional because items already in a running
   // session's ring were parsed before this field existed.
   toolUseId?: string
+  /** what a file-editing call is about to change, so the chat can show it the way Claude Code does */
+  edit?: TranscriptEdit
+}
+
+export interface TranscriptEdit {
+  path: string
+  before: string
+  after: string
+  /** edits beyond the first, for a MultiEdit that carried several */
+  more?: number
+  /** 1-based line the replaced text starts at, when it could be located in the file */
+  line?: number
 }
 
 export type SessionOrigin = 'app' | 'terminal' | 'subagent'
@@ -124,6 +136,8 @@ export interface Agent {
   interrupted?: boolean
   // ignored files carried into the worktree at launch, so the agent can actually run the project
   seeded?: string[]
+  /** the user typed this name; otherwise it is only a worktree directory and Claude Code titles itself */
+  titled?: boolean
   createdAt: string
 }
 

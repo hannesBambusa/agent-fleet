@@ -101,6 +101,23 @@ body { background: var(--ink); color: var(--fg); user-select: none; overflow: hi
 /* Swapping the fleet for the compact rail replaces the whole panel, which is jarring at full
    opacity. Each side enters from the direction the panel is travelling, so the change reads as the
    panel folding down rather than as one view being replaced by another. */
+/* Syntax colours for the diff previews. Set here as the dark default and overridden per theme in
+   state/theme.ts, the same way every other colour in the app works. */
+:root {
+  --code-comment: #7a8b99;
+  --code-string: #c3e88d;
+  --code-number: #f78c6c;
+  --code-keyword: #c792ea;
+  --code-fn: #82aaff;
+  --code-punct: #9aa4b2;
+  --diff-add-bg: color-mix(in srgb, #199e70 15%, transparent);
+  --diff-del-bg: color-mix(in srgb, #d95926 13%, transparent);
+  --diff-add-word: color-mix(in srgb, #199e70 32%, transparent);
+  --diff-del-word: color-mix(in srgb, #d95926 28%, transparent);
+  --diff-add-ink: #8bf0bd;
+  --diff-del-ink: #ff9b93;
+}
+
 @keyframes swap-narrow {
   from { opacity: 0; transform: translateX(-10px) scale(0.99); }
   to   { opacity: 1; transform: none; }

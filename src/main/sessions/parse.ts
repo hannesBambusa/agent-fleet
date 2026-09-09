@@ -1,4 +1,5 @@
-import type { Session, TranscriptItem } from '../../shared/types'
+import { readFileSync, statSync } from 'node:fs'
+import type { Session, TranscriptEdit, TranscriptItem } from '../../shared/types'
 
 const MAX_TRANSCRIPT = 400
 const COMMAND_RE = new RegExp('<command-name>([^<]+)</command-name>')
@@ -52,6 +53,78 @@ function toolSummary(input: Block): string {
     if (typeof v === 'string' && v) return v
   }
   return JSON.stringify(input).slice(0, 200)
+}
+
+// how much of an edit is worth keeping in a ring of 400 items: enough to read, not a whole file
+const EDIT_CAP = 2400
+// files are only opened for an edit this fresh: replaying history would read hundreds of them, and
+// the numbers would be wrong anyway once the file has moved on
+const LOCATE_MS = 10 * 60 * 1000
+const LOCATE_MAX_BYTES = 2 * 1024 * 1024
+
+/**
+ * Which line an edit lands on.
+ *
+ * The tool call carries the text being replaced but not where it sits, and Claude Code's own reply
+ * no longer includes the numbered snippet, so the only way to number the diff is to find the text in
+ * the file. Ambiguous or missing means no numbers rather than wrong ones.
+ */
+function lineOf(path: string, needle: string, ts: string): number | undefined {
+  if (!path || !needle) return undefined
+  if (Date.now() - Date.parse(ts) > LOCATE_MS) return undefined
+  try {
+    if (statSync(path).size > LOCATE_MAX_BYTES) return undefined
+    const body = readFileSync(path, 'utf8')
+    const at = body.indexOf(needle)
+    if (at < 0 || body.indexOf(needle, at + 1) >= 0) return undefined
+    return body.slice(0, at).split('\n').length
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * What a file-editing call is about to do.
+ *
+ * Claude Code shows the change inline as it makes it, and the summary line alone ("src/x.ts") says
+ * nothing about what happened. The strings are already in the tool input; this keeps a bounded slice
+ * of them so the chat can draw the same diff.
+ */
+function editOf(tool: string, input: Block, ts: string): TranscriptEdit | undefined {
+  const path = typeof input.file_path === 'string' ? input.file_path : ''
+  const str = (k: string): string => (typeof input[k] === 'string' ? (input[k] as string) : '')
+  if (tool === 'Edit' || tool === 'NotebookEdit') {
+    const before = str('old_string') || str('old_source')
+    const after = str('new_string') || str('new_source')
+    if (!before && !after) return undefined
+    return {
+      path,
+      before: before.slice(0, EDIT_CAP),
+      after: after.slice(0, EDIT_CAP),
+      line: lineOf(path, before, ts)
+    }
+  }
+  if (tool === 'Write') {
+    const after = str('content')
+    if (!after) return undefined
+    // a write replaces the file, so its diff starts at the top
+    return { path, before: '', after: after.slice(0, EDIT_CAP), line: 1 }
+  }
+  if (tool === 'MultiEdit') {
+    const list = Array.isArray(input.edits) ? (input.edits as Array<Record<string, unknown>>) : []
+    const first = list[0]
+    if (!first) return undefined
+    const before = typeof first.old_string === 'string' ? first.old_string : ''
+    const after = typeof first.new_string === 'string' ? first.new_string : ''
+    return {
+      path,
+      before: before.slice(0, EDIT_CAP),
+      after: after.slice(0, EDIT_CAP),
+      more: list.length - 1,
+      line: lineOf(path, before, ts)
+    }
+  }
+  return undefined
 }
 
 /** Apply one JSONL line to the session. Returns true when something user-visible changed. */
@@ -132,7 +205,15 @@ function applyAssistant(s: Session, d: Line, id: string, ts: string): boolean {
       s.currentTool = name
       const summary = toolSummary((b.input ?? {}) as Block)
       const toolUseId = typeof b.id === 'string' ? b.id : undefined
-      push(s, { id: `${id}-${String(b.id ?? '')}`, ts, kind: 'tool', tool: name, text: summary.slice(0, 500), toolUseId })
+      push(s, {
+        id: `${id}-${String(b.id ?? '')}`,
+        ts,
+        kind: 'tool',
+        tool: name,
+        text: summary.slice(0, 500),
+        toolUseId,
+        edit: editOf(name, (b.input ?? {}) as Block, ts)
+      })
     }
   }
   return true

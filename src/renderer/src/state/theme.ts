@@ -169,6 +169,31 @@ function apply(t: Theme): void {
   root.style.setProperty('--glow', t.dark ? '0.35' : '0.7')
   root.style.setProperty('--sub', t.dark ? '#bb9af7' : '#5b2d91')
   root.style.setProperty('--sub-soft', t.dark ? '16%' : '34%')
+  // a diff sits on the panel, so its syntax colours have to survive that ground in both directions
+  const code = t.dark
+    ? { comment: '#7a8b99', string: '#c3e88d', number: '#f78c6c', keyword: '#c792ea', fn: '#82aaff', punct: '#9aa4b2' }
+    : { comment: '#5c6773', string: '#0f7b3f', number: '#a8460a', keyword: '#8b21b0', fn: '#0b56b8', punct: '#4a5461' }
+  for (const [k, v] of Object.entries(code)) root.style.setProperty(`--code-${k}`, v)
+  // A translucent wash reads on near-black and vanishes on paper, and the pale +/- ink that works on
+  // one is invisible on the other, so the diff carries its own pair of palettes.
+  const diff = t.dark
+    ? {
+        'add-bg': 'color-mix(in srgb, #199e70 15%, transparent)',
+        'del-bg': 'color-mix(in srgb, #d95926 13%, transparent)',
+        'add-word': 'color-mix(in srgb, #199e70 32%, transparent)',
+        'del-word': 'color-mix(in srgb, #d95926 28%, transparent)',
+        'add-ink': '#8bf0bd',
+        'del-ink': '#ff9b93'
+      }
+    : {
+        'add-bg': 'color-mix(in srgb, #0f7b3f 13%, transparent)',
+        'del-bg': 'color-mix(in srgb, #b3261e 11%, transparent)',
+        'add-word': 'color-mix(in srgb, #0f7b3f 26%, transparent)',
+        'del-word': 'color-mix(in srgb, #b3261e 22%, transparent)',
+        'add-ink': '#0f7b3f',
+        'del-ink': '#b3261e'
+      }
+  for (const [k, v] of Object.entries(diff)) root.style.setProperty(`--diff-${k}`, v)
   root.style.colorScheme = t.dark ? 'dark' : 'light'
   // the terminal is not styled by CSS, so it listens for this instead
   window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: t }))

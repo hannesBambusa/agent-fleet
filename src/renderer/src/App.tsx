@@ -41,7 +41,8 @@ function placeholder(a: Agent, ptyAt: number | undefined, said: SessionState | n
     repo: a.repoName,
     worktree: null,
     branch: null,
-    topic: a.name,
+    // only a name the user chose says anything; a generated one is just the worktree directory
+    topic: a.titled ? a.name : null,
     model: null,
     version: null,
     lastCommand: null,
@@ -110,7 +111,7 @@ export default function App(): JSX.Element {
     return all.map((s) => {
       if (s.parentId) return s
       const a = agentBySession.get(s.id)
-      return { ...s, origin: a ? 'app' : 'terminal', topic: s.topic ?? a?.name ?? null } as Session
+      return { ...s, origin: a ? 'app' : 'terminal', topic: s.topic ?? (a?.titled ? a.name : null) } as Session
     })
   }, [all, agentBySession])
 
@@ -126,7 +127,7 @@ export default function App(): JSX.Element {
     return [...extra, ...live].map((s) => {
       if (s.parentId) return s
       const a = agentBySession.get(s.id)
-      return { ...s, origin: a ? 'app' : 'terminal', topic: s.topic ?? a?.name ?? null } as Session
+      return { ...s, origin: a ? 'app' : 'terminal', topic: s.topic ?? (a?.titled ? a.name : null) } as Session
     })
     // `now` is in here because a placeholder's state is read off the clock: without it a card that
     // stopped printing would keep claiming running until some unrelated session happened to update

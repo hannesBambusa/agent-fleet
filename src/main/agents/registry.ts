@@ -135,6 +135,7 @@ export class AgentRegistry extends EventEmitter {
   launch(req: LaunchRequest, cols: number, rows: number): Agent {
     const sessionId = req.resumeSessionId ?? randomUUID()
     // the typed name becomes a directory under .claude/worktrees, so it is slugged like the fallback
+    const titled = !!req.name.trim()
     const wanted = safeName(req.name || slugFrom(req.prompt))
     // Claude Code refuses to create a worktree whose directory already exists, and an abandoned one
     // from an earlier run keeps its name, so the launch died on the spot with nothing on screen.
@@ -148,6 +149,7 @@ export class AgentRegistry extends EventEmitter {
       name,
       prompt: req.prompt,
       worktree: req.worktree,
+      titled,
       browser: req.browser,
       chat: req.chat,
       detached: req.detached,
@@ -268,7 +270,11 @@ export class AgentRegistry extends EventEmitter {
     // the machine can write to, so it is untrusted input like any other.
     if (mode === 'resume') args.push('--resume', shellQuote(a.sessionId))
     else {
-      args.push('--session-id', shellQuote(a.sessionId), '--name', shellQuote(a.name))
+      args.push('--session-id', shellQuote(a.sessionId))
+      // Only a name the user chose is worth forcing. Left alone, Claude Code titles the session from
+      // the work itself ("Participant widget campaign status filter"), and passing the generated
+      // worktree directory name overwrote that with `agent-2`.
+      if (a.titled) args.push('--name', shellQuote(a.name))
       if (a.worktree) args.push('--worktree', shellQuote(a.name))
       if (a.prompt) args.push(shellQuote(a.prompt))
     }
