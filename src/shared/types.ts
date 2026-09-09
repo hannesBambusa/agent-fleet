@@ -346,3 +346,13 @@ export interface SeedPlan {
   worktree: string
   items: SeedItem[]
 }
+
+/** One slash command a session will answer to, offered by the composer so it can be found at all. */
+export interface SlashCommand {
+  /** with the leading slash, exactly as it goes into the session */
+  name: string
+  /** the `description:` line of the file's frontmatter, empty when it has none */
+  description: string
+  /** where it came from, which is also the order a name collision is resolved in */
+  source: 'project' | 'personal' | 'plugin' | 'builtin'
+}

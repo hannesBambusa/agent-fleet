@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Agent, Session, TranscriptItem } from '../../../shared/types'
+import type { Agent, Session, SlashCommand, TranscriptItem } from '../../../shared/types'
 import { clock, dur, tokens as fmtTokens } from '../lib/format'
 import { Markdown } from './Markdown'
 import { useCountUp } from '../lib/useCountUp'
 import { ApprovalCard } from './Approval'
 import { termSize } from '../terminal/Terminal'
+import { useSlashCommands } from '../state/commands'
 
 interface Turn {
   id: string
@@ -12,8 +13,21 @@ interface Turn {
   ts: string
   text: string
   command?: boolean
+  // what a slash command printed, which belongs to the command and not to any tool call
+  output?: string
+  outputError?: boolean
   tools: Array<{ id: string; tool: string; text: string; result?: TranscriptItem }>
 }
+
+/**
+ * Commands whose answer is a menu drawn in the terminal.
+ *
+ * They can be sent from the chat but never shown in it, so the only honest thing is to point at the
+ * terminal. The set is written down because a transcript cannot tell a command that printed from one
+ * that printed after someone drove a picker, and it will drift as Claude Code changes, exactly like
+ * the builtin list in `src/main/commands/index.ts`.
+ */
+const MENU_COMMANDS = ['/mcp', '/model', '/agents', '/resume', '/config', '/login', '/logout']
 
 // one word per turn, picked from the turn's own start time so it holds still while the turn runs
 const VERBS = [
@@ -55,6 +69,15 @@ export function toTurns(items: TranscriptItem[]): Turn[] {
       if (it.toolUseId) byToolUseId.set(it.toolUseId, call)
       continue
     }
+    // a command prints its own output, so it hangs under that turn rather than pairing with a tool
+    if (it.kind === 'system') {
+      const last = out[out.length - 1]
+      if (last?.command) {
+        last.output = last.output ? `${last.output}\n${it.text}` : it.text
+        if (it.isError) last.outputError = true
+      }
+      continue
+    }
     if (it.kind === 'result') {
       // an item parsed before toolUseId existed carries no id, so it keeps the old last-tool pairing
       const call = it.toolUseId ? byToolUseId.get(it.toolUseId) : cur?.tools[cur.tools.length - 1]
@@ -80,6 +103,16 @@ export function ChatView({
   const turns = useMemo(() => toTurns(s.transcript), [s.transcript])
   const [pending, setPending] = useState<Array<{ id: string; ts: string; text: string }>>([])
   const [draft, setDraft] = useState('')
+  // the menu command sent from here that nobody has answered yet, and when it went
+  const [menuCmd, setMenuCmd] = useState<{ name: string; at: number } | null>(null)
+
+  // The notice stands until the command finally prints, which only happens once someone has driven
+  // the menu in the terminal. Nothing else can end it: a timer would take the pointer away while the
+  // menu is still on screen waiting, which is the one moment it is worth having.
+  useEffect(() => {
+    if (!menuCmd) return
+    if (s.transcript.some((i) => i.kind === 'system' && Date.parse(i.ts) >= menuCmd.at)) setMenuCmd(null)
+  }, [s.transcript, menuCmd])
 
   // An echo lives until the same words show up in the transcript. Claude Code rewrites a pasted
   // block on the way in — newlines become spaces, and long text is cut short — so the match is made
@@ -156,6 +189,34 @@ export function ChatView({
   // the review chain, in the order it runs
   const QUICK = ['/git-add', '/preflight', '/fix-issues', '/commit', '/commit skip']
 
+  // typing a slash command already works; the menu is only so the ones that exist can be found
+  const commands = useSlashCommands(s.cwd)
+  const [caret, setCaret] = useState(0)
+  const [hi, setHi] = useState(0)
+  const [hidden, setHidden] = useState(false)
+  // the first word of the draft, which is the whole of a command before its arguments
+  const head = draft.split(/\s/)[0]
+  // Only while the caret is still in that word: past it the user is writing arguments, and a menu
+  // that stays open there would swallow the return that sends them.
+  const query = draft.startsWith('/') && caret <= head.length ? head.slice(1).toLowerCase() : null
+  const matches = useMemo(
+    () => (query === null ? [] : commands.filter((c) => c.name.slice(1).toLowerCase().includes(query))),
+    [commands, query]
+  )
+  const menu = matches.length > 0 && !hidden
+  // also on length, so the highlight cannot point past the end when the list arrives or narrows
+  useEffect(() => setHi(0), [query, matches.length])
+  const rows = useRef<Array<HTMLButtonElement | null>>([])
+  useEffect(() => {
+    if (menu) rows.current[hi]?.scrollIntoView({ block: 'nearest' })
+  }, [menu, hi])
+
+  /** put a command in the composer without sending it, keeping anything already typed after it */
+  function complete(c: SlashCommand): void {
+    setDraft(`${c.name}${draft.slice(head.length) || ' '}`)
+    setHidden(true)
+  }
+
   // Esc is what Claude Code listens for; the terminal tab does this when you press it there
   function interrupt(): void {
     if (!agent) return
@@ -168,6 +229,9 @@ export function ChatView({
     // the transcript is written in bursts, so a sent message would sit invisible for a second or
     // two; show it at once and drop the echo when the real one arrives
     setPending((p) => [...p, { id: `pending-${Date.now()}`, ts: new Date().toISOString(), text }])
+    // on the first word only, so `/model opus` counts; anything else sent supersedes an old notice
+    const first = text.split(/\s/)[0]
+    setMenuCmd(MENU_COMMANDS.includes(first) ? { name: first, at: Date.now() } : null)
     // A slash command opens Claude Code's command menu while it is being typed, and a return that
     // arrives before the menu has settled picks the highlighted entry instead of sending the line —
     // which is how "/commit skip" went in as "/commit" and then again in full. Plain text for a
@@ -201,8 +265,17 @@ export function ChatView({
         {pending.map((p) => (
           <Bubble key={p.id} t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }} />
         ))}
-        {(waiting || empty) && agent && (
-          <ApprovalCard agentId={agent.id} quiet={!waiting} onOpenTerminal={onOpenTerminal} />
+        {/* a real prompt outranks the menu notice: it is what is actually blocking the session */}
+        {(waiting || empty || menuCmd) && agent && (
+          <ApprovalCard
+            agentId={agent.id}
+            quiet={!waiting && !menuCmd}
+            note={menuCmd && !waiting ? `${menuCmd.name} draws a menu the chat cannot show.` : undefined}
+            onOpenTerminal={() => {
+              setMenuCmd(null)
+              onOpenTerminal()
+            }}
+          />
         )}
       </div>
 
@@ -244,11 +317,64 @@ export function ChatView({
               /clear
             </button>
           </div>
-          <div className="rounded-md border border-[var(--line)] bg-[var(--panel)] focus-within:border-[var(--accent)]">
+          <div className="relative rounded-md border border-[var(--line)] bg-[var(--panel)] focus-within:border-[var(--accent)]">
+            {menu && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-[220px] overflow-auto rounded-md border border-[var(--line)] bg-[var(--raised)] py-1 shadow-2xl">
+                {matches.map((c, i) => (
+                  <button
+                    key={c.name}
+                    ref={(el) => {
+                      rows.current[i] = el
+                    }}
+                    // mousedown would blur the composer first, and the completion needs it focused
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => complete(c)}
+                    onMouseEnter={() => setHi(i)}
+                    className={`flex w-full items-baseline gap-2 px-2.5 py-1 text-left ${
+                      i === hi ? 'bg-[var(--accent-soft)]' : ''
+                    }`}
+                  >
+                    <span className={`mono shrink-0 text-[11.5px] ${i === hi ? 'text-[var(--accent)]' : 'text-[var(--fg)]'}`}>
+                      {c.name}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[10.5px] text-[var(--dim)]" title={c.description}>
+                      {c.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <textarea
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                setCaret(e.target.selectionStart)
+                setHidden(false)
+              }}
+              onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
               onKeyDown={(e) => {
+                if (menu) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setHi((i) => (i + 1) % matches.length)
+                    return
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setHi((i) => (i - 1 + matches.length) % matches.length)
+                    return
+                  }
+                  if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.metaKey)) {
+                    e.preventDefault()
+                    complete(matches[hi])
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setHidden(true)
+                    return
+                  }
+                }
                 if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
                   e.preventDefault()
                   send()
@@ -265,7 +391,7 @@ export function ChatView({
               className="select w-full resize-none bg-transparent px-3 py-2.5 text-[12.5px] outline-none placeholder:text-[var(--dim)]"
             />
             <div className="flex items-center gap-3 px-3 pb-2">
-              <span className="lbl">↩ send · ⇧↩ newline</span>
+              <span className="lbl">{menu ? '↑↓ move · ⇥ complete · esc close' : '↩ send · ⇧↩ newline'}</span>
               <span className="lbl ml-auto">typed straight into the session</span>
               <button
                 onClick={() => send()}
@@ -393,6 +519,15 @@ function Bubble({ t }: { t: Turn }): JSX.Element {
             <div className="select text-[12.5px] leading-relaxed">
               <Markdown text={t.text} />
             </div>
+          )}
+          {t.output && (
+            <pre
+              className={`select mt-1.5 max-h-[200px] overflow-auto whitespace-pre-wrap break-words rounded border bg-[var(--panel)] px-2 py-1.5 text-[10px] leading-snug ${
+                t.outputError ? 'border-[var(--danger)]/40 text-[var(--danger)]' : 'border-[var(--line)] text-[var(--muted)]'
+              }`}
+            >
+              {t.output}
+            </pre>
           )}
         </div>
       </div>

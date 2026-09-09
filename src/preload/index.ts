@@ -19,6 +19,7 @@ import type {
   SeedItem,
   SeedPlan,
   Session,
+  SlashCommand,
   UsageSnapshot
 } from '../shared/types'
 
@@ -71,6 +72,7 @@ const api = {
   onBrowserActivity: (cb: (id: string) => void) => on<[string]>('browser:activity', cb),
 
   usage: (): Promise<UsageSnapshot> => ipcRenderer.invoke('usage:read'),
+  slashCommands: (cwd: string): Promise<SlashCommand[]> => ipcRenderer.invoke('commands:list', cwd),
   gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke('git:status', cwd),
   gitPush: (cwd: string): Promise<string> => ipcRenderer.invoke('git:push', cwd),
   gitGraph: (cwd: string, max?: number): Promise<GitCommit[]> => ipcRenderer.invoke('git:graph', cwd, max),

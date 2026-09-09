@@ -32,6 +32,7 @@ import {
   unstage as gitUnstage
 } from './git'
 import { usage } from './usage'
+import { slashCommands } from './commands'
 import { seedApply, seedPlan } from './git/seed'
 import type { Agent, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
 
@@ -155,6 +156,7 @@ function wireIpc(): void {
   ipcMain.handle('browser:reload', (_, agentId: string) => browser.reload(agentId))
 
   ipcMain.handle('usage:read', () => usage())
+  ipcMain.handle('commands:list', (_, cwd: string) => slashCommands(cwd))
   ipcMain.handle('git:status', (_, cwd: string) => gitStatus(cwd))
   ipcMain.handle('git:push', (_, cwd: string) => gitPush(cwd))
   ipcMain.handle('git:graph', (_, cwd: string, max?: number) => gitGraph(cwd, max))
