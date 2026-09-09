@@ -23,11 +23,23 @@ interface Turn {
  * Commands whose answer is a menu drawn in the terminal.
  *
  * They can be sent from the chat but never shown in it, so the only honest thing is to point at the
- * terminal. The set is written down because a transcript cannot tell a command that printed from one
- * that printed after someone drove a picker, and it will drift as Claude Code changes, exactly like
- * the builtin list in `src/main/commands/index.ts`.
+ * terminal. Knowing them by name only buys an instant notice rather than a waited one; the set is
+ * written down because a transcript cannot tell a command that printed from one that printed after
+ * someone drove a picker, and it will drift as Claude Code changes, exactly like the builtin list in
+ * `src/main/commands/index.ts`.
  */
 const MENU_COMMANDS = ['/mcp', '/model', '/agents', '/resume', '/config', '/login', '/logout']
+
+/**
+ * How long a slash command may stay silent before the chat says where its answer went.
+ *
+ * A command that records anything records the command line itself first, at the moment it runs, so
+ * the only race here is Claude Code's write plus the tailer's poll, a second or two. Six seconds is
+ * several times that, and it is not a race against the work: `/init` writes its line and starts
+ * answering long before the wait is up. Claude Code 2.1.266 records nothing for any slash command,
+ * which is what made this the usual path rather than a fallback.
+ */
+const QUIET_MS = 6000
 
 // one word per turn, picked from the turn's own start time so it holds still while the turn runs
 const VERBS = [
@@ -103,16 +115,16 @@ export function ChatView({
   const turns = useMemo(() => toTurns(s.transcript), [s.transcript])
   const [pending, setPending] = useState<Array<{ id: string; ts: string; text: string }>>([])
   const [draft, setDraft] = useState('')
-  // the menu command sent from here that nobody has answered yet, and when it went
-  const [menuCmd, setMenuCmd] = useState<{ name: string; at: number } | null>(null)
+  // the slash command sent from here that has yet to show for itself, and when it went
+  const [sentCmd, setSentCmd] = useState<{ name: string; at: number; picker: boolean } | null>(null)
 
-  // The notice stands until the command finally prints, which only happens once someone has driven
-  // the menu in the terminal. Nothing else can end it: a timer would take the pointer away while the
-  // menu is still on screen waiting, which is the one moment it is worth having.
+  // The notice stands until the session writes something down, which for a picker means someone has
+  // been to the terminal and driven it. Nothing else ends it: a second timer would take the pointer
+  // away while the menu is still on screen waiting, which is the one moment it is worth having.
   useEffect(() => {
-    if (!menuCmd) return
-    if (s.transcript.some((i) => i.kind === 'system' && Date.parse(i.ts) >= menuCmd.at)) setMenuCmd(null)
-  }, [s.transcript, menuCmd])
+    if (!sentCmd) return
+    if (s.transcript.some((i) => Date.parse(i.ts) >= sentCmd.at)) setSentCmd(null)
+  }, [s.transcript, sentCmd])
 
   // An echo lives until the same words show up in the transcript. Claude Code rewrites a pasted
   // block on the way in — newlines become spaces, and long text is cut short — so the match is made
@@ -169,6 +181,15 @@ export function ChatView({
   const starting = empty && startedFor < 12_000
   // a session that has said nothing is not mid-turn, whatever the card's state says
   const busy = s.state === 'running' && !empty
+  // A picker is hopeless from the first keystroke and says so at once; anything else is given the
+  // quiet window first. `now` already ticks every second, so the wait needs no timer of its own. A
+  // real prompt outranks the notice, being the thing actually blocking the session.
+  const sentNote =
+    !sentCmd || waiting || !(sentCmd.picker || now - sentCmd.at > QUIET_MS)
+      ? undefined
+      : sentCmd.picker
+        ? `${sentCmd.name} draws a menu, and the chat cannot show it.`
+        : `${sentCmd.name} printed nothing here, so its answer is in the terminal.`
   // the turn started at the last thing you said; that is the clock Claude Code shows too
   const turnStart = useMemo(() => {
     for (let i = s.transcript.length - 1; i >= 0; i--) {
@@ -229,9 +250,17 @@ export function ChatView({
     // the transcript is written in bursts, so a sent message would sit invisible for a second or
     // two; show it at once and drop the echo when the real one arrives
     setPending((p) => [...p, { id: `pending-${Date.now()}`, ts: new Date().toISOString(), text }])
-    // on the first word only, so `/model opus` counts; anything else sent supersedes an old notice
+    // On the first word only, so `/model opus` counts; anything else sent supersedes an old notice.
+    // A command with a file behind it is a prompt and is recorded like one, however long the writing
+    // takes, so it is never waited on; the built-ins are answered by the CLI itself and are the ones
+    // that leave no trace. An unknown name is either a built-in missing from the list or a typo, and
+    // both of those are answered in the terminal too.
     const first = text.split(/\s/)[0]
-    setMenuCmd(MENU_COMMANDS.includes(first) ? { name: first, at: Date.now() } : null)
+    const known = commands.find((c) => c.name === first)
+    const fileBacked = !!known && known.source !== 'builtin'
+    setSentCmd(
+      first.startsWith('/') && !fileBacked ? { name: first, at: Date.now(), picker: MENU_COMMANDS.includes(first) } : null
+    )
     // A slash command opens Claude Code's command menu while it is being typed, and a return that
     // arrives before the menu has settled picks the highlighted entry instead of sending the line —
     // which is how "/commit skip" went in as "/commit" and then again in full. Plain text for a
@@ -265,14 +294,13 @@ export function ChatView({
         {pending.map((p) => (
           <Bubble key={p.id} t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }} />
         ))}
-        {/* a real prompt outranks the menu notice: it is what is actually blocking the session */}
-        {(waiting || empty || menuCmd) && agent && (
+        {(waiting || empty || sentNote) && agent && (
           <ApprovalCard
             agentId={agent.id}
-            quiet={!waiting && !menuCmd}
-            note={menuCmd && !waiting ? `${menuCmd.name} draws a menu the chat cannot show.` : undefined}
+            quiet={!waiting && !sentNote}
+            note={sentNote}
             onOpenTerminal={() => {
-              setMenuCmd(null)
+              setSentCmd(null)
               onOpenTerminal()
             }}
           />
