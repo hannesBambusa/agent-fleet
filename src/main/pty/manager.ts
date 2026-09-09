@@ -12,6 +12,27 @@ export interface PtyOpts {
 
 const HISTORY_BYTES = 200_000
 
+/**
+ * Claude Code marks its own children through the environment, and an agent must never be taken for
+ * one: `CLAUDE_CODE_CHILD_SESSION` turns transcript saving off, so an agent started by an app that
+ * was itself started from inside a Claude Code session writes no JSONL at all. That file is how this
+ * app sees anything, so the agent then runs perfectly while its card stays empty and its chat blank.
+ * The rest identify the parent session and its message channel, which are not this agent's.
+ */
+const PARENT_MARKERS = [
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_ENTRYPOINT'
+]
+
+function ownSession(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && !PARENT_MARKERS.includes(k)) out[k] = v
+  return out
+}
+
 export class PtyManager extends EventEmitter {
   private procs = new Map<string, pty.IPty>()
   // last output per id, replayed into a terminal pane that mounts after the fact
@@ -26,7 +47,7 @@ export class PtyManager extends EventEmitter {
       cols: o.cols,
       rows: o.rows,
       cwd: o.cwd,
-      env: { ...process.env, ...o.env, TERM_PROGRAM: 'agent-fleet', COLORTERM: 'truecolor' } as Record<string, string>
+      env: { ...ownSession(process.env), ...o.env, TERM_PROGRAM: 'agent-fleet', COLORTERM: 'truecolor' }
     })
     this.procs.set(id, p)
     p.onData((data) => {
