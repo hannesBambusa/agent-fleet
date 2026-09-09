@@ -13,6 +13,7 @@ pnpm test        # node --test, currently the session state machine
 pnpm typecheck   # both tsconfigs, run before calling anything done
 pnpm build       # out/
 pnpm dist        # release/*.dmg, mac arm64, unsigned
+pnpm dist:dir    # the same build unpacked, for a quick look without waiting for a dmg
 ```
 
 **`pnpm dev` does not restart the main process.** Any change under `src/main` or `src/preload` needs
@@ -56,6 +57,11 @@ Then restart the app.
 - Destructive or outward-facing buttons confirm on a second press. Nothing reaches a remote without
   the user pressing it.
 - Prose in the UI, in docs and in commit messages: plain words, no em dashes, no filler.
+- The renderer never touches the filesystem, git or a child process. A new capability is a main
+  process module plus an IPC call, never a `node:fs` import under `src/renderer`.
+- `~/.claude/projects/*.jsonl` is read only. The app writes to `~/.claude/settings.json`
+  additively and on confirmation, to `~/.claude/hooks/`, to `~/.claude/agent-fleet/status/` and to
+  its own userData directory. Nowhere else in `~/.claude`.
 
 ## Gotchas that have already cost time
 
@@ -87,6 +93,15 @@ Then restart the app.
   secret and refuses any request carrying `Origin` or `Referer`; keep both guards on anything new.
 - **`belongsTo()` in the agent registry is the only place** that decides whether a transcript belongs
   to an agent. Three copies of that rule is what made agents appear twice.
+- **`app.getPath('userData')` differs between `pnpm dev` and a direct `electron out/main/index.js`**,
+  so agents launched one way are invisible the other way. It is pinned to
+  `~/Library/Application Support/agent-fleet` at the top of `src/main/index.ts`; keep it pinned.
+- **Tailwind is pinned to 3.** Version 4 drops the `tailwind.config.js` plus postcss flow this repo
+  uses, and pnpm suggests the upgrade on every install. Only move deliberately.
+- **Two things must stay outside the asar.** `resources/browser-mcp` and `resources/hooks` are read
+  from `process.resourcesPath`, and `node-pty` is a native addon that cannot load from an archive.
+  They are `extraResources` and `asarUnpack` in `electron-builder.yml`. A new runtime resource needs
+  the same entry, and the failure only shows in a packaged build.
 
 ## Verifying changes
 
@@ -105,6 +120,11 @@ rm -f .t.cjs
 
 Build a scratch repo in the scratchpad directory for anything that writes. Never test a destructive
 path against a real repository. Always finish with `pnpm typecheck` and `pnpm build`.
+
+To see the packaged app start at all, macOS has no `timeout`, so use
+`electron out/main/index.js & sleep 5; kill $!`. While agents are running the quit dialog swallows
+that kill, and a script has to follow with `kill -9` and `pkill -f 'claude --session-id'` or the
+child agents keep running after the app is gone.
 
 ## Git
 
