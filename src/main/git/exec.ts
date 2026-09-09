@@ -27,6 +27,27 @@ export function run(cwd: string, args: string[], timeout = 15000): Promise<{ ok:
   })
 }
 
+/**
+ * Whether git can work in this directory at all.
+ *
+ * A session's cwd is wherever the user happened to be, so having no repository is an ordinary
+ * answer rather than a failure. Asked once at the top of each query, it also keeps the handful of
+ * git calls behind one query from each rediscovering the same thing as a thrown error.
+ *
+ * `run` rather than `git`, because this is the one question where "git said no" and "git could not
+ * run" must not be flattened together: only the first is an answer. Judging the exit code alone
+ * would misread a repository whose rev-parse failed for some other reason.
+ */
+export async function isRepo(cwd: string): Promise<boolean> {
+  const { ok, text } = await run(cwd, ['rev-parse', '--is-inside-work-tree'], 5000)
+  if (ok) return text.trim() === 'true'
+  // Only the parenthetical form means git walked up to the root and found nothing. The bare
+  // "not a git repository: <path>" is a .git that points somewhere gone, which is how an agent
+  // worktree breaks when its parent repository moves, and that has to be reported, not hidden.
+  if (text.includes('not a git repository (or any of the parent directories)')) return false
+  throw new Error(text || `git could not run in ${cwd}`)
+}
+
 export function lines(text: string): string[] {
   return text.split('\n').map((l) => l.trim()).filter(Boolean)
 }

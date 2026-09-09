@@ -112,7 +112,8 @@ Everything else in the main process is plain functions, so the way to check one 
 run it against a real or scratch repository:
 
 ```bash
-node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild src/main/git/index.ts \
+# the glob matches every installed esbuild, so name the one you want or it fails on "Must use outdir"
+node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild/bin/esbuild src/main/git/index.ts \
   --bundle --platform=node --format=cjs --outfile=.t.cjs --log-level=error
 node -e "require('./.t.cjs').shipPlan('/path/to/worktree').then(console.log)"
 rm -f .t.cjs

@@ -45,6 +45,9 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
   const [message, setMessage] = useState('')
   const [committing, setCommitting] = useState(false)
   const [status, setStatus] = useState<GitStatus | null>(null)
+  // status is null both before the first answer and when there is no repository; only this tells
+  // the two apart, and without it the pane sits on "reading git status…" forever
+  const [noRepo, setNoRepo] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sel, setSel] = useState<Selection | null>(null)
   const [diff, setDiff] = useState('')
@@ -74,7 +77,9 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      setStatus(await window.api.git.status(view))
+      const s = await window.api.git.status(view)
+      setStatus(s)
+      setNoRepo(s === null)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -101,10 +106,18 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setConfirmMerge(false)
     setConfirmPublish(false)
     setPushMsg(null)
+    // a different directory is an open question again, whatever the last one turned out to be
+    setNoRepo(false)
     // the pull-request url only changes when the branch or its upstream does, so it stays one-shot
     void window.api.git.prUrl(cwd).then(setPrUrl).catch(() => setPrUrl(null))
     reload()
     void refresh()
+  }, [refresh, reload, view])
+
+  // A directory does not become a repository while the pane is open, so once git has said it is not
+  // one both clocks stop rather than re-asking a settled question every three seconds.
+  useEffect(() => {
+    if (noRepo) return
     const t = setInterval(() => void refresh(), POLL_MS)
     // a floor, for repo changes that leave the status untouched (a commit landing on the base branch)
     const p = setInterval(reload, PLAN_MS)
@@ -112,7 +125,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
       clearInterval(t)
       clearInterval(p)
     }
-  }, [refresh, reload, view])
+  }, [noRepo, refresh, reload])
 
 
   // the diff is re-read on every poll so the pane follows the agent while it edits
@@ -281,10 +294,19 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     }
   }
 
+  if (noRepo) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-[11px] text-[var(--dim)]">
+        <span className="text-[var(--muted)]">not a git repository</span>
+        <span>this session is running in a plain directory, so there is no git state to show</span>
+        <span className="mono text-[9.5px]">{view}</span>
+      </div>
+    )
+  }
   if (error) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-[11px] text-[var(--dim)]">
-        {error.includes('not a git repository') ? 'this folder is not a git repository' : error}
+        {error}
       </div>
     )
   }
