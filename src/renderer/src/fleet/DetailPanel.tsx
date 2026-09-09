@@ -2,6 +2,7 @@ import type { Agent, Session } from '../../../shared/types'
 import { age, clock, shortModel, tokens } from '../lib/format'
 import { StateChip } from './Canvas'
 import { Transcript } from '../workspace/Transcript'
+import { Commands } from '../workspace/Commands'
 
 interface Props {
   s: Session | null
@@ -74,6 +75,7 @@ export function DetailPanel({ s, agent, now, onOpen }: Props): JSX.Element {
           <KV k="cwd" v={s.cwd} />
         </div>
       </div>
+      {!!s.commands.length && <Commands list={s.commands} now={now} />}
       <div className="lbl px-4 pt-3">latest</div>
       <div className="min-h-0 flex-1">
         <Transcript items={s.transcript.slice(-60)} compact />

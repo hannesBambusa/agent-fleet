@@ -68,12 +68,27 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
       </button>
 
       <div className="min-h-0 flex-1 overflow-auto py-1">
-        {[...groups.entries()].map(([repo, list]) => (
-          <div key={repo} className="mb-0.5">
-            <div className="lbl flex items-center gap-1.5 px-3 pb-1 pt-2.5">
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: repoColor(list[0].repoPath) }} />
-              {repo}
+        {[...groups.entries()].map(([repo, list]) => {
+          const tint = repoColor(list[0].repoPath)
+          const live = list.filter((r) => flat(r, 0).some(({ s }) => s.state === 'running' || s.state === 'waiting')).length
+          return (
+          <div key={repo} className="mb-2">
+            {/* Sticky, so the repo stays named while its agents scroll past: the whole point of the
+                compact view is many agents at once, and a header that scrolls away leaves rows that
+                could belong to anything. */}
+            <div
+              className="sticky top-0 z-10 flex items-center gap-1.5 border-y border-[var(--line)] px-3 py-1"
+              style={{ background: `color-mix(in srgb, ${tint} 16%, var(--panel))` }}
+            >
+              <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ background: tint }} />
+              <span className="mono min-w-0 flex-1 truncate text-[10px] font-medium tracking-wide text-[var(--fg)]" title={repo}>
+                {repo}
+              </span>
+              {live > 0 && <span className="mono shrink-0 text-[9px]" style={{ color: tint }}>{live} live</span>}
+              <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{list.length}</span>
             </div>
+            {/* the spine carries the repo's colour down every row that belongs to it */}
+            <div style={{ borderLeft: `2px solid ${tint}`, background: `color-mix(in srgb, ${tint} 4%, transparent)` }}>
             {list
               .flatMap((r) => flat(r, 0))
               .map(({ s, depth }) => {
@@ -126,8 +141,10 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
                   </button>
                 )
               })}
+            </div>
           </div>
-        ))}
+          )
+        })}
       </div>
     </aside>
   )

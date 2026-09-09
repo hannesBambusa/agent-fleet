@@ -7,7 +7,6 @@ import { useAgents } from './state/agents'
 import { useNow } from './lib/useNow'
 import { TopBar } from './fleet/TopBar'
 import { FleetView } from './fleet/FleetView'
-import { Rail } from './fleet/Rail'
 import { DetailPanel } from './fleet/DetailPanel'
 import { Workspace } from './workspace/Workspace'
 import { LaunchDialog } from './launch/LaunchDialog'
@@ -47,6 +46,7 @@ function placeholder(a: Agent, ptyAt: number | undefined, said: SessionState | n
     version: null,
     lastCommand: null,
     lastCommandAt: null,
+    commands: [],
     lastPrompt: a.prompt || null,
     lastPromptAt: a.createdAt,
     lastEventAt: a.createdAt,
@@ -100,6 +100,8 @@ export default function App(): JSX.Element {
   const [opened, setOpened] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
   const [fleetWidth, setFleetWidth] = useState(readWidth)
+  // a width that eases looks right when a button changed it and laggy when a hand is dragging it
+  const [dragging, setDragging] = useState(false)
   const dragFrom = useRef(0)
 
   const agentBySession = useMemo(() => new Map(agents.map((a) => [a.sessionId, a])), [agents])
@@ -203,25 +205,34 @@ export default function App(): JSX.Element {
         contextSession={current ?? hovered ?? sessions.find((s) => s.state === 'running') ?? null}
       />
       <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 shrink-0 overflow-hidden" style={{ width: fleetWidth }}>
-          {compact ? (
-            <Rail sessions={sessions} opened={opened} now={now} onOpen={open} onFleet={() => setFleetWidth(FLEET_DEFAULT)} />
-          ) : (
-            <FleetView
-              sessions={sessions}
-              history={known}
-              usage={usage}
-              selected={opened ?? selected}
-              now={now}
-              onSelect={setSelected}
-              onOpen={open}
-            />
-          )}
+        <div
+          className={`min-h-0 shrink-0 overflow-hidden ${dragging ? '' : 'width-eased'}`}
+          style={{ width: fleetWidth }}
+        >
+          {/* keyed on the mode, so React remounts and the entry animation plays on every swap */}
+          <FleetView
+            sessions={sessions}
+            history={known}
+            usage={usage}
+            selected={opened ?? selected}
+            now={now}
+            onSelect={setSelected}
+            onOpen={open}
+            compact={compact}
+            opened={opened}
+            onExpand={() => setFleetWidth(FLEET_DEFAULT)}
+          />
         </div>
         <Divider
-          onStart={() => (dragFrom.current = fleetWidth)}
+          onStart={() => {
+            dragFrom.current = fleetWidth
+            setDragging(true)
+          }}
           onDrag={dragFleet}
-          onEnd={persistFleet}
+          onEnd={() => {
+            setDragging(false)
+            persistFleet()
+          }}
           onDoubleClick={() => setFleetWidth(compact ? FLEET_DEFAULT : FLEET_MIN + 40)}
           title="drag to resize · double-click to toggle compact"
         />

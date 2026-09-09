@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   Agent,
+  CatalogItem,
   BrowserState,
   GitBranch,
   GitCommit,
@@ -37,6 +38,7 @@ const api = {
   installHooks: (): Promise<HookStatus> => ipcRenderer.invoke('hooks:install'),
   uninstallHooks: (): Promise<HookStatus> => ipcRenderer.invoke('hooks:uninstall'),
 
+  catalog: (): Promise<CatalogItem[]> => ipcRenderer.invoke('catalog:list'),
   listRepos: (): Promise<Repo[]> => ipcRenderer.invoke('repos:list'),
   upsertRepo: (r: Repo): Promise<Repo> => ipcRenderer.invoke('repos:upsert', r),
   removeRepo: (path: string): Promise<void> => ipcRenderer.invoke('repos:remove', path),
@@ -57,11 +59,15 @@ const api = {
   ptyResize: (id: string, cols: number, rows: number): void => ipcRenderer.send('pty:resize', id, cols, rows),
   onPtyData: (cb: (id: string, data: string) => void) => on<[string, string]>('pty:data', cb),
 
+  saveImage: (bytes: Uint8Array, mime: string): Promise<string> => ipcRenderer.invoke('files:saveImage', bytes, mime),
+  pickImage: (): Promise<string | null> => ipcRenderer.invoke('files:pickImage'),
+  imageThumb: (path: string): Promise<string | null> => ipcRenderer.invoke('files:thumb', path),
   openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:open', path),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:external', url),
 
   browserLayout: (agentId: string | null, bounds: { x: number; y: number; width: number; height: number } | null): void =>
     ipcRenderer.send('browser:layout', agentId, bounds),
+  browserShot: (agentId: string): Promise<string> => ipcRenderer.invoke('browser:shot', agentId),
   browserState: (agentId: string): Promise<BrowserState | null> => ipcRenderer.invoke('browser:state', agentId),
   browserNavigate: (agentId: string, url: string): Promise<void> => ipcRenderer.invoke('browser:navigate', agentId, url),
   browserBack: (agentId: string): Promise<void> => ipcRenderer.invoke('browser:back', agentId),

@@ -98,6 +98,22 @@ body { background: var(--ink); color: var(--fg); user-select: none; overflow: hi
   0%   { background-position: -140% 0; }
   100% { background-position: 240% 0; }
 }
+/* Swapping the fleet for the compact rail replaces the whole panel, which is jarring at full
+   opacity. Each side enters from the direction the panel is travelling, so the change reads as the
+   panel folding down rather than as one view being replaced by another. */
+@keyframes swap-narrow {
+  from { opacity: 0; transform: translateX(-10px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes swap-wide {
+  from { opacity: 0; transform: translateX(14px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+.swap-narrow { animation: swap-narrow 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.swap-wide { animation: swap-wide 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* the width itself eases only when something other than a drag changed it */
+.width-eased { transition: width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+
 .rail-live {
   background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) var(--sweep, 10%), transparent) 45%, transparent);
   background-size: 60% 100%;

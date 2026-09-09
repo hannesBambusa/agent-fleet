@@ -97,6 +97,10 @@ function applyUser(s: Session, d: Line, id: string, ts: string): boolean {
   if (cmd) {
     s.lastCommand = cmd[1].trim()
     s.lastCommandAt = ts
+    // Commands are the spine of how a session was worked: /git-add, /preflight, /commit. They are
+    // rare enough to keep all of them, unlike the transcript, which is a ring and forgets.
+    s.commands.push({ name: s.lastCommand, at: ts })
+    if (s.commands.length > 300) s.commands.shift()
     s.turns += 1
     push(s, { id, ts, kind: 'command', text: s.lastCommand })
     return true

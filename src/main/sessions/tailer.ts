@@ -220,6 +220,7 @@ export class Tailer extends EventEmitter {
       version: null,
       lastCommand: null,
       lastCommandAt: null,
+      commands: [],
       lastPrompt: null,
       lastPromptAt: null,
       lastEventAt: null,

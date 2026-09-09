@@ -1,10 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Agent, Session, TranscriptItem } from '../../../shared/types'
-import { clock, dur, tokens as fmtTokens } from '../lib/format'
+import type { Agent, Session, SessionCommand, TranscriptItem } from '../../../shared/types'
+import { age, clock, dur, tokens as fmtTokens } from '../lib/format'
 import { Markdown } from './Markdown'
 import { useCountUp } from '../lib/useCountUp'
 import { ApprovalCard } from './Approval'
 import { termSize } from '../terminal/Terminal'
+import { Divider } from '../lib/Divider'
+import { useQuick } from '../state/quickCommands'
+
+// the command timeline down the right of the chat, and where its width is remembered
+const RAIL_KEY = 'agent-fleet.commandRail'
+const RAIL_MIN = 130
+
+function readRail(): number {
+  try {
+    const v = Number(localStorage.getItem(RAIL_KEY))
+    return v >= RAIL_MIN ? v : 190
+  } catch {
+    return 190
+  }
+}
 
 interface Turn {
   id: string
@@ -154,12 +169,66 @@ export function ChatView({
   }
 
   // the review chain, in the order it runs
-  const QUICK = ['/git-add', '/preflight', '/fix-issues', '/commit', '/commit skip']
+  // the user's own list, edited from the commands tab in the fleet view
+  const QUICK = useQuick()
 
   // Esc is what Claude Code listens for; the terminal tab does this when you press it there
   function interrupt(): void {
     if (!agent) return
     window.api.ptyWrite(agent.id, '\x1b')
+  }
+
+  /**
+   * Claude Code takes an image as a path in the prompt, so an attachment is a file plus a mention of
+   * it. Pasting, dropping and picking all end the same way: the path is appended to the draft, and
+   * the user can say what they want done with it before sending.
+   */
+  const [attaching, setAttaching] = useState(false)
+  const [railW, setRailW] = useState(readRail)
+  const railFrom = useRef(0)
+  // what was attached, so the composer can show pictures instead of a wall of paths. The path still
+  // goes into the draft: that is what Claude Code reads, and the user may want to edit around it.
+  const [shots, setShots] = useState<Array<{ path: string; thumb: string | null }>>([])
+
+  function mention(path: string): void {
+    setDraft((d) => (d ? `${d.replace(/\s*$/, '')} ${path} ` : `${path} `))
+    void window.api.imageThumb(path).then((thumb) => setShots((prev) => [...prev, { path, thumb }]))
+  }
+
+  function unmention(path: string): void {
+    setDraft((d) => d.replace(path, '').replace(/[ \t]{2,}/g, ' ').trim())
+    setShots((prev) => prev.filter((x) => x.path !== path))
+  }
+
+  useEffect(() => {
+    setShots((prev) => {
+      const kept = prev.filter((x) => draft.includes(x.path))
+      return kept.length === prev.length ? prev : kept
+    })
+  }, [draft])
+
+  async function attachFile(file: File): Promise<void> {
+    setAttaching(true)
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      mention(await window.api.saveImage(bytes, file.type || 'image/png'))
+    } finally {
+      setAttaching(false)
+    }
+  }
+
+  /** The browser pane, as the agent would see it. Only works while that pane is actually on screen. */
+  async function attachShot(): Promise<void> {
+    if (!agent) return
+    setAttaching(true)
+    try {
+      const shot = await window.api.browserShot(agent.id)
+      mention(shot)
+    } catch (err) {
+      setDraft((d) => d + (d ? ' ' : '') + `(could not capture the browser: ${err instanceof Error ? err.message : String(err)})`)
+    } finally {
+      setAttaching(false)
+    }
   }
 
   function send(override?: string): void {
@@ -180,7 +249,8 @@ export function ChatView({
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--ink)]">
+    <div className="flex h-full min-w-0 bg-[var(--ink)]">
+      <div className="flex min-w-0 flex-1 flex-col">
       <div
         ref={box}
         onScroll={(e) => {
@@ -249,9 +319,48 @@ export function ChatView({
             </button>
           </div>
           <div className="rounded-md border border-[var(--line)] bg-[var(--panel)] focus-within:border-[var(--accent)]">
+            {!!shots.length && (
+              <div className="flex flex-wrap gap-2 px-3 pt-2.5">
+                {shots.map((sh) => (
+                  <span
+                    key={sh.path}
+                    title={sh.path}
+                    className="group relative overflow-hidden rounded border border-[var(--line)] bg-[var(--raised)]"
+                  >
+                    {sh.thumb ? (
+                      <img src={sh.thumb} alt="" className="block h-10 w-auto max-w-[120px] object-cover" />
+                    ) : (
+                      <span className="mono block px-2 py-2.5 text-[10px] text-[var(--muted)]">
+                        {sh.path.split('/').pop()}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => unmention(sh.path)}
+                      title="remove this attachment"
+                      className="absolute right-0 top-0 hidden h-4 w-4 items-center justify-center bg-[var(--ink)]/80 text-[10px] leading-none text-[var(--danger)] group-hover:flex"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                const image = [...e.clipboardData.files].find((f) => f.type.startsWith('image/'))
+                if (!image) return
+                e.preventDefault()
+                void attachFile(image)
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                const image = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'))
+                if (!image) return
+                e.preventDefault()
+                void attachFile(image)
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
                   e.preventDefault()
@@ -270,6 +379,24 @@ export function ChatView({
             />
             <div className="flex items-center gap-3 px-3 pb-2">
               <span className="lbl">↩ send · ⇧↩ newline</span>
+              <button
+                onClick={() => void window.api.pickImage().then((p) => p && mention(p))}
+                disabled={attaching}
+                title="attach an image; paste or drop one here too"
+                className="lbl hover:!text-[var(--accent)] disabled:opacity-40"
+              >
+                {attaching ? 'attaching…' : '+ image'}
+              </button>
+              {agent && (
+                <button
+                  onClick={() => void attachShot()}
+                  disabled={attaching}
+                  title="attach a shot of this agent's browser pane, which must be open to capture"
+                  className="lbl hover:!text-[var(--accent)] disabled:opacity-40"
+                >
+                  + browser shot
+                </button>
+              )}
               <span className="lbl ml-auto">typed straight into the session</span>
               <button
                 onClick={() => send()}
@@ -315,7 +442,81 @@ export function ChatView({
           </div>
         )}
       </div>
+      </div>
+      {!!s.commands.length && (
+        <>
+          <Divider
+            onStart={() => (railFrom.current = railW)}
+            onDrag={(d) => setRailW(Math.min(360, Math.max(RAIL_MIN, railFrom.current - d)))}
+            onEnd={() => {
+              try {
+                localStorage.setItem(RAIL_KEY, String(railW))
+              } catch {
+                // storage unavailable; the width just does not persist
+              }
+            }}
+            title="drag to resize the command timeline"
+          />
+          <CommandRail list={s.commands} now={now} width={railW} />
+        </>
+      )}
     </div>
+  )
+}
+
+/**
+ * The session's slash commands, as a timeline down the side of the chat.
+ *
+ * Oldest at the top, newest at the bottom, the same direction the conversation runs, so the two read
+ * together. The gap printed under each entry is the time since the one before it, which is what turns
+ * a list of names into the shape of a review loop: a long gap is work, a short one is a retry.
+ */
+function CommandRail({ list, now, width }: { list: SessionCommand[]; now: number; width: number }): JSX.Element {
+  const box = useRef<HTMLDivElement>(null)
+  // follow the newest, the way the chat does
+  useEffect(() => {
+    box.current?.scrollTo({ top: box.current.scrollHeight })
+  }, [list.length])
+
+  return (
+    <aside
+      style={{ width }}
+      className="flex shrink-0 flex-col border-l border-[var(--line)] bg-[var(--panel)]"
+    >
+      <div className="lbl flex shrink-0 items-baseline justify-between border-b border-[var(--line)] px-3 py-2">
+        <span>commands</span>
+        <span className="mono text-[10px] text-[var(--dim)]">{list.length}</span>
+      </div>
+      <div ref={box} className="min-h-0 flex-1 overflow-auto px-3 py-2">
+        {list.map((c, i) => {
+          const prev = list[i - 1]
+          const gap = prev ? Date.parse(c.at) - Date.parse(prev.at) : 0
+          const last = i === list.length - 1
+          return (
+            <div key={`${c.at}-${i}`} className="relative pb-2.5 pl-4">
+              {/* the rail runs between the dots, not past the last one */}
+              {!last && <span className="absolute left-[3px] top-[10px] h-full w-px bg-[var(--line)]" aria-hidden />}
+              <span
+                className="absolute left-0 top-[5px] h-[7px] w-[7px] rounded-full"
+                style={{ background: last ? 'var(--accent)' : 'var(--dim)' }}
+                aria-hidden
+              />
+              <div className="flex items-baseline gap-1.5">
+                <span
+                  className={`mono min-w-0 flex-1 truncate text-[11px] ${last ? 'text-[var(--accent)]' : ''}`}
+                  title={`${c.name} · ${new Date(c.at).toLocaleString()}`}
+                >
+                  {c.name}
+                </span>
+                <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{clock(c.at)}</span>
+              </div>
+              {gap > 1000 && <div className="mono text-[9px] text-[var(--dim)]">+{dur(gap)}</div>}
+              {last && <div className="mono text-[9px] text-[var(--dim)]">{age(c.at, now)} ago</div>}
+            </div>
+          )
+        })}
+      </div>
+    </aside>
   )
 }
 

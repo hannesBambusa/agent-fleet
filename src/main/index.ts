@@ -32,6 +32,8 @@ import {
   unstage as gitUnstage
 } from './git'
 import { usage } from './usage'
+import { catalog } from './catalog'
+import { pickImage, saveImage, thumbnail } from './files/attach'
 import { seedApply, seedPlan } from './git/seed'
 import type { Agent, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
 
@@ -120,6 +122,7 @@ function wireIpc(): void {
   ipcMain.handle('hooks:install', () => installHooks())
   ipcMain.handle('hooks:uninstall', () => uninstallHooks())
 
+  ipcMain.handle('catalog:list', () => catalog(repos.list().map((r) => r.path)))
   ipcMain.handle('repos:list', (): Repo[] => repos.list())
   ipcMain.handle('repos:upsert', (_, r: Repo): Repo => repos.upsert(r))
   ipcMain.handle('repos:remove', (_, path: string) => repos.remove(path))
@@ -157,6 +160,17 @@ function wireIpc(): void {
   ipcMain.handle('usage:read', () => usage())
   ipcMain.handle('git:status', (_, cwd: string) => gitStatus(cwd))
   ipcMain.handle('git:push', (_, cwd: string) => gitPush(cwd))
+  ipcMain.handle('files:saveImage', (_, bytes: Uint8Array, mime: string) => saveImage(bytes, mime))
+  ipcMain.handle('files:pickImage', () => pickImage())
+  ipcMain.handle('files:thumb', (_, path: string) => thumbnail(path))
+  // the pane's own pixels, saved where an agent can read them back
+  ipcMain.handle('browser:shot', async (_, agentId: string) => {
+    if (!browser.isVisible(agentId)) {
+      throw new Error('open this agent\u2019s browser tab first: a parked pane has nothing to capture')
+    }
+    const res = (await browser.cdp(agentId, 'Page.captureScreenshot', { format: 'png' }, 8000)) as { data: string }
+    return saveImage(Buffer.from(res.data, 'base64'), 'image/png')
+  })
   ipcMain.handle('git:graph', (_, cwd: string, max?: number) => gitGraph(cwd, max))
   ipcMain.handle('git:log', (_, cwd: string) => gitLog(cwd))
   ipcMain.handle('git:mergePlan', (_, cwd: string) => gitMergePlan(cwd))

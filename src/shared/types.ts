@@ -25,6 +25,12 @@ export interface TranscriptItem {
 
 export type SessionOrigin = 'app' | 'terminal' | 'subagent'
 
+/** One slash command, as it was typed, with when it went in. */
+export interface SessionCommand {
+  name: string
+  at: string
+}
+
 export interface Session {
   id: string
   // set by the renderer: launched from this app, or picked up from a terminal
@@ -47,6 +53,8 @@ export interface Session {
   version: string | null
   lastCommand: string | null
   lastCommandAt: string | null
+  /** every slash command sent to this session, oldest first: the shape of how it was worked */
+  commands: SessionCommand[]
   lastPrompt: string | null
   lastPromptAt: string | null
   lastEventAt: string | null
@@ -345,4 +353,24 @@ export interface SeedPlan {
   repoPath: string
   worktree: string
   items: SeedItem[]
+}
+
+export type CatalogKind = 'skill' | 'command' | 'agent'
+
+/** One thing Claude Code can do here: a skill, a slash command or a subagent definition. */
+export interface CatalogItem {
+  kind: CatalogKind
+  name: string
+  description: string
+  /** your own config, a plugin, or a project's */
+  source: 'user' | 'plugin' | 'project'
+  /** the plugin or project it belongs to */
+  origin: string
+  path: string
+  model: string | null
+  tools: string | null
+  hint: string | null
+  /** reachable only when the user types it, never chosen by the model */
+  userOnly: boolean
+  at: string | null
 }

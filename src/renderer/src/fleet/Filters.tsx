@@ -7,7 +7,8 @@ export interface FilterState {
   repo: 'all' | string
 }
 
-export type FleetTab = 'graph' | 'waterfall' | 'history' | 'usage'
+// how to look at the running sessions; what the panel shows at all is a level above this
+export type FleetTab = 'graph' | 'waterfall' | 'history'
 
 export const emptyFilter: FilterState = { q: '', state: 'all', origin: 'all', repo: 'all' }
 
@@ -58,9 +59,6 @@ export function Filters({ sessions, value, onChange, shown, view, onView }: Prop
         </Tab>
         <Tab on={view === 'history'} onClick={() => onView('history')}>
           history
-        </Tab>
-        <Tab on={view === 'usage'} onClick={() => onView('usage')}>
-          usage
         </Tab>
       </div>
       <Field label="search">
