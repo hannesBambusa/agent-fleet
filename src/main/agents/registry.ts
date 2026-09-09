@@ -216,6 +216,10 @@ export class AgentRegistry extends EventEmitter {
   rebind(id: string, sessionId: string, cwd: string): void {
     const a = this.agents.get(id)
     if (!a || a.sessionId === sessionId) return
+    if (!UUID.test(sessionId)) {
+      console.error('[agents] refusing to adopt a session id that is not a uuid:', sessionId)
+      return
+    }
     a.sessionId = sessionId
     a.cwd = cwd
     a.status = 'live'
@@ -238,10 +242,6 @@ export class AgentRegistry extends EventEmitter {
     if (changed) {
       this.save()
       this.emit('update', a)
-    if (!UUID.test(sessionId)) {
-      console.error('[agents] refusing to adopt a session id that is not a uuid:', sessionId)
-      return
-    }
     }
   }
 
