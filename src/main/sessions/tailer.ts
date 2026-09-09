@@ -42,6 +42,8 @@ interface SubagentMeta {
 }
 
 export class Tailer extends EventEmitter {
+  // directory listings, kept until the directory's own mtime moves
+  private dirs = new Map<string, { mtime: number; names: string[] }>()
   private files = new Map<string, Tracked>()
   private timer: NodeJS.Timeout | null = null
   private live = new Liveness()
@@ -82,34 +84,48 @@ export class Tailer extends EventEmitter {
     this.emit('update', s)
   }
 
-  private scan(): void {
-    let dirs: string[] = []
+  /**
+   * Lists a directory, but only when it has actually changed.
+   *
+   * This runs on the main thread every 600 ms and walks every project the user has ever opened, so
+   * its cost grows with history rather than with live agents. A directory's mtime moves when an entry
+   * is added or removed, which is the only thing this listing is for: the files themselves are read
+   * by track(), which does its own stat.
+   */
+  private listing(dir: string): string[] {
+    let mtime: number
     try {
-      dirs = readdirSync(PROJECTS)
+      mtime = statSync(dir).mtimeMs
     } catch {
-      return
+      this.dirs.delete(dir)
+      return []
     }
+    const seen = this.dirs.get(dir)
+    if (seen && seen.mtime === mtime) return seen.names
+    let names: string[] = []
+    try {
+      names = readdirSync(dir)
+    } catch {
+      names = []
+    }
+    this.dirs.set(dir, { mtime, names })
+    return names
+  }
+
+  private scan(): void {
+    const dirs = this.listing(PROJECTS)
+    if (!dirs.length) return
     const now = Date.now()
     const changed = new Set<Session>()
     for (const dir of dirs) {
       const projectDir = join(PROJECTS, dir)
-      let names: string[] = []
-      try {
-        names = readdirSync(projectDir).filter((n) => n.endsWith('.jsonl'))
-      } catch {
-        continue
-      }
+      const names = this.listing(projectDir).filter((n) => n.endsWith('.jsonl'))
       for (const name of names) {
         const sessionId = basename(name, '.jsonl')
         this.track(join(projectDir, name), dir, sessionId, null, now, changed)
         // subagents live in <project>/<sessionId>/subagents/agent-<id>.jsonl
         const subDir = join(projectDir, sessionId, 'subagents')
-        let subs: string[] = []
-        try {
-          subs = readdirSync(subDir).filter((n) => n.startsWith('agent-') && n.endsWith('.jsonl'))
-        } catch {
-          continue
-        }
+        const subs = this.listing(subDir).filter((n) => n.startsWith('agent-') && n.endsWith('.jsonl'))
         for (const sub of subs) this.track(join(subDir, sub), dir, sessionId, sub.slice('agent-'.length, -'.jsonl'.length), now, changed)
       }
     }
