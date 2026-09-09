@@ -86,7 +86,8 @@ function applyUser(s: Session, d: Line, id: string, ts: string): boolean {
     s.currentTool = null
     for (const r of results) {
       const text = typeof r.content === 'string' ? r.content : textOf(r.content)
-      push(s, { id, ts, kind: 'result', text: text.slice(0, 2000), isError: !!r.is_error })
+      const toolUseId = typeof r.tool_use_id === 'string' ? r.tool_use_id : undefined
+      push(s, { id, ts, kind: 'result', text: text.slice(0, 2000), isError: !!r.is_error, toolUseId })
     }
     return true
   }
@@ -126,7 +127,8 @@ function applyAssistant(s: Session, d: Line, id: string, ts: string): boolean {
       const name = String(b.name ?? 'tool')
       s.currentTool = name
       const summary = toolSummary((b.input ?? {}) as Block)
-      push(s, { id: `${id}-${String(b.id ?? '')}`, ts, kind: 'tool', tool: name, text: summary.slice(0, 500) })
+      const toolUseId = typeof b.id === 'string' ? b.id : undefined
+      push(s, { id: `${id}-${String(b.id ?? '')}`, ts, kind: 'tool', tool: name, text: summary.slice(0, 500), toolUseId })
     }
   }
   return true

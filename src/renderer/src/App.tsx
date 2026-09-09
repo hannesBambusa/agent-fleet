@@ -14,6 +14,7 @@ import { termSize } from './terminal/Terminal'
 import { useUiScale } from './state/uiScale'
 import { useUsage } from './state/usage'
 import { useTheme } from './state/theme'
+import { usePtyActivity } from './state/ptyActivity'
 import { Divider } from './lib/Divider'
 
 const FLEET_DEFAULT = 900
@@ -22,8 +23,11 @@ const COMPACT_BELOW = 520
 const RIGHT_MIN = 560
 const WIDTH_KEY = 'agent-fleet.fleetWidth'
 
+// the tailer's own gap between two tool calls; a placeholder is judged by the same clock as a session
+const BETWEEN_TOOLS_MS = 25_000
+
 // a launched agent whose JSONL has not appeared yet still needs a card
-function placeholder(a: Agent): Session {
+function placeholder(a: Agent, ptyAt: number | undefined): Session {
   return {
     id: a.sessionId,
     origin: 'app',
@@ -50,8 +54,15 @@ function placeholder(a: Agent): Session {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     context: 0,
     currentTool: null,
-    // no transcript yet: only a launch this recent can honestly be called running
-    state: a.status !== 'exited' && Date.now() - Date.parse(a.createdAt) < 60_000 ? 'running' : 'idle',
+    // No transcript yet, so the pty is the only proof of work: Claude Code can go minutes without
+    // writing the JSONL while it is genuinely busy, and time since launch alone called those agents
+    // idle. The launch window stays as the case where nothing has been printed yet.
+    state:
+      a.status !== 'exited' &&
+      ((ptyAt !== undefined && Date.now() - ptyAt < BETWEEN_TOOLS_MS) ||
+        Date.now() - Date.parse(a.createdAt) < 60_000)
+        ? 'running'
+        : 'idle',
     closed: false,
     hookState: null,
     transcript: []
@@ -76,6 +87,7 @@ export default function App(): JSX.Element {
   const ui = useUiScale()
   const usage = useUsage()
   const theme = useTheme()
+  const ptyAt = usePtyActivity()
   const [selected, setSelected] = useState<string | null>(null)
   const [opened, setOpened] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
@@ -98,13 +110,17 @@ export default function App(): JSX.Element {
     // A placeholder covers the gap before the transcript file appears; main relinks the agent to
     // whatever session Claude actually created, so the placeholder resolves instead of doubling up.
     const tracked = new Set(all.map((s) => s.id))
-    const extra = agents.filter((a) => !tracked.has(a.sessionId) && a.status !== 'exited').map(placeholder)
+    const extra = agents
+      .filter((a) => !tracked.has(a.sessionId) && a.status !== 'exited')
+      .map((a) => placeholder(a, ptyAt.get(a.id)))
     return [...extra, ...live].map((s) => {
       if (s.parentId) return s
       const a = agentBySession.get(s.id)
       return { ...s, origin: a ? 'app' : 'terminal', topic: s.topic ?? a?.name ?? null } as Session
     })
-  }, [all, agents, agentBySession])
+    // `now` is in here because a placeholder's state is read off the clock: without it a card that
+    // stopped printing would keep claiming running until some unrelated session happened to update
+  }, [all, agents, agentBySession, ptyAt, now])
 
   // a freshly launched agent opens straight into its terminal
   useEffect(() => {

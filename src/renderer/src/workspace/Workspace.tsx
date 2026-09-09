@@ -180,7 +180,10 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
         {showTerminal ? (
           <Terminal id={agent.id} />
         ) : (
-          <ChatView s={s} agent={agent} now={now} onOpenTerminal={() => setView('terminal')} />
+          // keyed per session: the composer's draft and its unsent echoes are that session's, and
+          // without this React keeps one instance across a switch, so both follow you to the next
+          // agent and a draft typed for one ends up written into another one's pty
+          <ChatView key={s.id} s={s} agent={agent} now={now} onOpenTerminal={() => setView('terminal')} />
         )}
         {agent?.status === 'exited' && showTerminal && <ExitedPanel agent={agent} />}
       </div>
