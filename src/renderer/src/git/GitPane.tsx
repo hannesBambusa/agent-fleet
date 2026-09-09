@@ -4,6 +4,7 @@ import { DiffView } from './DiffView'
 import { History } from './History'
 import { Branches } from './Branches'
 import { ShipPane } from './ShipPane'
+import { SeedBand } from './SeedBand'
 import { age } from '../lib/format'
 
 const POLL_MS = 3000
@@ -496,6 +497,8 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
           ))}
         </div>
       )}
+
+      {tab === 'changes' && isWorktree && target === 'worktree' && <SeedBand repoPath={repoPath} cwd={cwd} />}
 
       <div className="min-h-0 flex-1">
         {tab === 'ship' ? (

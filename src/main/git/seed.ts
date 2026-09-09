@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, statSync, symlinkSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SeedItem, SeedPlan } from '../../shared/types'
 
@@ -81,8 +81,34 @@ export async function seedPlan(repoPath: string, worktree: string): Promise<Seed
   return { repoPath, worktree, items }
 }
 
+/**
+ * Keeps a linked directory out of `git status`.
+ *
+ * `node_modules/` in .gitignore matches a directory; the link we create is a symlink, which git sees
+ * as a file, so the pattern misses it and the agent's very first `git status` shows an untracked
+ * `node_modules` it could then commit. The worktree's own exclude file fixes that without touching
+ * anything the repository tracks.
+ */
+async function excludeLocally(worktree: string, path: string): Promise<void> {
+  const rel = (await git(worktree, ['rev-parse', '--git-path', 'info/exclude'])).trim()
+  if (!rel) return
+  const file = rel.startsWith('/') ? rel : join(worktree, rel)
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    const body = existsSync(file) ? readFileSync(file, 'utf8') : ''
+    if (body.split('\n').some((l) => l.trim() === `/${path}`)) return
+    appendFileSync(file, `${body && !body.endsWith('\n') ? '\n' : ''}# linked by agent-fleet\n/${path}\n`)
+  } catch {
+    // an exclude we could not write only means a noisier status, never a broken worktree
+  }
+}
+
 /** Carries the named items across. Never overwrites anything the worktree already has. */
-export function seedApply(repoPath: string, worktree: string, items: SeedItem[]): { done: string[]; failed: string[] } {
+export async function seedApply(
+  repoPath: string,
+  worktree: string,
+  items: SeedItem[]
+): Promise<{ done: string[]; failed: string[] }> {
   const done: string[] = []
   const failed: string[] = []
   for (const it of items) {
@@ -93,8 +119,12 @@ export function seedApply(repoPath: string, worktree: string, items: SeedItem[])
         continue
       }
       mkdirSync(dirname(to), { recursive: true })
-      if (it.kind === 'link') symlinkSync(from, to, 'dir')
-      else copyFileSync(from, to)
+      if (it.kind === 'link') {
+        symlinkSync(from, to, 'dir')
+        await excludeLocally(worktree, it.path)
+      } else {
+        copyFileSync(from, to)
+      }
       done.push(it.path)
     } catch {
       failed.push(it.path)
@@ -112,5 +142,5 @@ export async function seedAuto(repoPath: string, worktree: string): Promise<stri
   const plan = await seedPlan(repoPath, worktree)
   const wanted = plan.items.filter((i) => i.kind === 'copy' && !i.present)
   if (!wanted.length) return []
-  return seedApply(repoPath, worktree, wanted).done
+  return (await seedApply(repoPath, worktree, wanted)).done
 }

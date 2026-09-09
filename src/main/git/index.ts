@@ -68,10 +68,11 @@ async function baseOf(cwd: string, branch: string): Promise<string | null> {
 
   for (const name of candidates) {
     if (!name || name === branch) continue
-    const isLocal = await git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`])
-      .then(() => true)
-      .catch(() => false)
-    if (isLocal) return name
+    // `show-ref --quiet` says nothing on either channel when the ref is missing, and git() only
+    // rejects on stderr, so a failed check read as a success and handed back a branch that exists
+    // nowhere. Ask for the sha instead and judge on whether one came back.
+    const sha = await git(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]).catch(() => '')
+    if (sha.trim()) return name
   }
   return null
 }
