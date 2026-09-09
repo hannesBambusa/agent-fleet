@@ -8,6 +8,8 @@ import { SeedBand } from './SeedBand'
 import { age } from '../lib/format'
 
 const POLL_MS = 3000
+// the plans cost a patch build and a dry-run apply, so they move on their own, slower clock
+const PLAN_MS = 15000
 
 interface Selection {
   path: string
@@ -70,6 +72,15 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     if (tab === 'ship' && target !== 'worktree') setTab('changes')
   }, [tab, target])
 
+  // the plans decide what the merge, publish and copy buttons offer, so they have to keep pace with
+  // the status they are drawn beside: fetched once, they went stale the moment the repo moved and the
+  // buttons kept offering an action the plan no longer supported
+  const reload = useCallback((): void => {
+    void window.api.gitMergePlan(cwd).then(setPlan).catch(() => setPlan(null))
+    void window.api.gitApplyPlan(cwd).then(setAplan).catch(() => setAplan(null))
+    void window.api.gitLog(cwd).then((l) => setHeadSubject(l[0]?.subject ?? null)).catch(() => setHeadSubject(null))
+  }, [cwd])
+
   useEffect(() => {
     setSel(null)
     setDiff('')
@@ -77,14 +88,19 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setConfirmMerge(false)
     setConfirmPublish(false)
     setPushMsg(null)
-    void window.api.gitMergePlan(cwd).then(setPlan).catch(() => setPlan(null))
-    void window.api.gitApplyPlan(cwd).then(setAplan).catch(() => setAplan(null))
-    void window.api.gitLog(cwd).then((l) => setHeadSubject(l[0]?.subject ?? null)).catch(() => setHeadSubject(null))
+    // the pull-request url only changes when the branch or its upstream does, so it stays one-shot
     void window.api.gitPrUrl(cwd).then(setPrUrl).catch(() => setPrUrl(null))
+    reload()
     void refresh()
     const t = setInterval(() => void refresh(), POLL_MS)
-    return () => clearInterval(t)
-  }, [refresh, view])
+    // a floor, for repo changes that leave the status untouched (a commit landing on the base branch)
+    const p = setInterval(reload, PLAN_MS)
+    return () => {
+      clearInterval(t)
+      clearInterval(p)
+    }
+  }, [refresh, reload, view])
+
 
   // the diff is re-read on every poll so the pane follows the agent while it edits
   useEffect(() => {
@@ -111,6 +127,15 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     }),
     [status]
   )
+  // …and immediately whenever the status actually moved, which is what usually invalidates a plan.
+  // Recomputing the apply plan means building a full patch and dry-running it, too expensive to do on
+  // the 3 s status tick for its own sake.
+  const shape = `${status?.branch}:${counts.staged}:${counts.unstaged}:${status?.unpushed}:${status?.behind}`
+  const lastShape = useRef('')
+  useEffect(() => {
+    if (lastShape.current && lastShape.current !== shape) reload()
+    lastShape.current = shape
+  }, [shape, reload])
 
   async function stage(paths: string[], on: boolean): Promise<void> {
     try {
