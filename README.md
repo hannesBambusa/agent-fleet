@@ -43,7 +43,7 @@ rather than the cache in `~/.claude.json`, which is often hours old.
 - macOS on Apple Silicon
 - Claude Code installed and logged in
 - `git`, `jq` and `tmux`
-- Node 20+ and pnpm, to build from source
+- Node 20+ and pnpm 10+, to build from source
 
 ## Running it
 
@@ -52,6 +52,27 @@ pnpm install
 pnpm dev
 pnpm test     # the session state machine, node --test
 ```
+
+`pnpm install` downloads the Electron binary and rebuilds `node-pty` against Electron's ABI, which is
+not the one your system node uses. Both are build steps pnpm 10 blocks unless a project asks for them,
+so `pnpm.onlyBuiltDependencies` in `package.json` names the three that are needed. If pnpm still
+reports ignored build scripts, you are on a version that reads the list from `pnpm-workspace.yaml`
+instead; run `pnpm approve-builds` and pick `electron`, `esbuild` and `node-pty`.
+
+If `pnpm dev` says `Error: Electron uninstall`, the Electron binary unpacked only partly. Seen on
+Node 26: the `extract-zip` step inside Electron's own postinstall creates `Electron.app/Contents/MacOS`
+and `Resources`, never writes `path.txt`, and exits 0 with nothing on stderr, so both `pnpm install`
+and `pnpm rebuild electron` report success. The downloaded zip itself is fine, and the system `unzip`
+handles it:
+
+```bash
+E=node_modules/electron
+unzip -oq ~/Library/Caches/electron/*/electron-v*-darwin-arm64.zip -d $E/dist
+printf 'Electron.app/Contents/MacOS/Electron' > $E/path.txt
+ls $E/dist/Electron.app/Contents   # Frameworks, Info.plist, MacOS, PkgInfo, Resources
+```
+
+Whether this is specific to Node 26 has not been checked against an older Node.
 
 First run, press **install hooks**. That adds one entry per hook event to `~/.claude/settings.json`
 and arranges for the status line payload to be saved. Both are backed up first, and both can be

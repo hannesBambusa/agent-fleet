@@ -11,7 +11,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "dist": "pnpm build && electron-builder --mac",
     "dist:dir": "pnpm build && electron-builder --mac --dir",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test \"test/*.test.mjs\"",
+    "postinstall": "electron-rebuild -f -w node-pty"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild", "node-pty"]
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
