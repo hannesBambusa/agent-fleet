@@ -271,59 +271,44 @@ export class Tailer extends EventEmitter {
     s.repoPath = wt ? wt.root : s.cwd
     s.worktree = wt ? wt.name : null
     s.repo = basename(s.repoPath)
-    const now = Date.now()
-    const last = s.lastEventAt ? Date.parse(s.lastEventAt) : 0
-    const age = now - last
-    if (s.closed) {
-      s.state = 'ended'
-      return
-    }
-    if (age > ENDED_MS) {
-      s.state = 'ended'
-      return
-    }
-    if (s.hookState) {
-      const said = now - Date.parse(s.hookState.at)
-      const h = s.hookState.state
-      if (h === 'ended' && said < HOOK_IDLE_MS) {
-        s.state = 'ended'
-        return
-      }
-      if (h === 'idle' && said < HOOK_IDLE_MS) {
-        s.state = age > STALE_MS ? 'stale' : 'idle'
-        return
-      }
-      // a stale "running" claim is worse than no claim: it pins a finished agent green forever
-      if ((h === 'running' || h === 'waiting') && said < HOOK_RUN_MS) {
-        s.state = h
-        return
-      }
-    }
-    if (age > STALE_MS) {
-      s.state = 'stale'
-      return
-    }
-    // a subagent has no user to wait for: between two tool calls it is thinking, not idle
-    if (s.parentId) {
-      s.state = age < SUBAGENT_ACTIVE_MS ? 'running' : 'idle'
-      return
-    }
-    if (working(s, now)) {
-      s.state = 'running'
-      return
-    }
-    // nothing is running, so nothing is "currently" a tool either
-    s.currentTool = null
-    s.state = 'idle'
+    const verdict = stateOf(s, Date.now())
+    if (verdict.clearTool) s.currentTool = null
+    s.state = verdict.state
   }
 }
 
 /**
- * Is a session mid-turn with no tool open? Without the hooks installed there is no explicit signal,
- * so the shape of the last thing it wrote has to answer it: a finished tool call means it is
- * deciding what to do next, a fresh prompt means it has not started, and words that have stopped
- * coming mean the turn is over and the human is up.
+ * What state a session is in, as a pure function of the session and the clock.
+ *
+ * Split out of recompute() so it can be tested without a filesystem: every wrong-looking card this
+ * project has hit was a wrong branch in here, and the shape of the inputs (a timestamp, a hook claim,
+ * the last transcript item) is exactly what a fixture can express. See test/state.test.mjs.
  */
+export function stateOf(s: Session, now: number): { state: SessionState; clearTool: boolean } {
+  const last = s.lastEventAt ? Date.parse(s.lastEventAt) : 0
+  const age = now - last
+  if (s.closed) return { state: 'ended', clearTool: false }
+  if (age > ENDED_MS) return { state: 'ended', clearTool: false }
+
+  if (s.hookState) {
+    const said = now - Date.parse(s.hookState.at)
+    const h = s.hookState.state
+    if (h === 'ended' && said < HOOK_IDLE_MS) return { state: 'ended', clearTool: false }
+    if (h === 'idle' && said < HOOK_IDLE_MS) {
+      return { state: age > STALE_MS ? 'stale' : 'idle', clearTool: false }
+    }
+    // a stale "running" claim is worse than no claim: it pins a finished agent green forever
+    if ((h === 'running' || h === 'waiting') && said < HOOK_RUN_MS) return { state: h, clearTool: false }
+  }
+
+  if (age > STALE_MS) return { state: 'stale', clearTool: false }
+  // a subagent has no user to wait for: between two tool calls it is thinking, not idle
+  if (s.parentId) return { state: age < SUBAGENT_ACTIVE_MS ? 'running' : 'idle', clearTool: false }
+  if (working(s, now)) return { state: 'running', clearTool: false }
+  // nothing is running, so nothing is "currently" a tool either
+  return { state: 'idle', clearTool: true }
+}
+
 function working(s: Session, now: number): boolean {
   const last = s.transcript[s.transcript.length - 1]
   if (!last) return false
