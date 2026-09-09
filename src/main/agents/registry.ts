@@ -6,7 +6,7 @@ import { app } from 'electron'
 import { execFile } from 'node:child_process'
 import type { Agent, AgentStatus, LaunchRequest } from '../../shared/types'
 import type { PtyManager } from '../pty/manager'
-import { BROWSER_PORT } from '../browser/server'
+import { BROWSER_PORT, BROWSER_SECRET } from '../browser/server'
 import { seedAuto } from '../git/seed'
 
 const FILE = (): string => join(app.getPath('userData'), 'agents.json')
@@ -59,7 +59,11 @@ function browserMcpConfig(agentId: string): string {
       browser: {
         command: 'node',
         args: [script],
-        env: { AGENT_FLEET_AGENT: agentId, AGENT_FLEET_BROWSER_PORT: String(BROWSER_PORT) }
+        env: {
+          AGENT_FLEET_AGENT: agentId,
+          AGENT_FLEET_BROWSER_PORT: String(BROWSER_PORT),
+          AGENT_FLEET_BROWSER_SECRET: BROWSER_SECRET
+        }
       }
     }
   })

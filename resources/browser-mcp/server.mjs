@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // MCP stdio server exposing one agent's embedded browser pane in agent-fleet.
 // Every tool call is proxied to the app's local control server; the app owns the Chromium view.
-// Env: AGENT_FLEET_AGENT (agent id), AGENT_FLEET_BROWSER_PORT (default 47392).
+// Env: AGENT_FLEET_AGENT (agent id), AGENT_FLEET_BROWSER_PORT (default 47392),
+//      AGENT_FLEET_BROWSER_SECRET (proves the caller was started by the app).
 
 const AGENT = process.env.AGENT_FLEET_AGENT
 const PORT = process.env.AGENT_FLEET_BROWSER_PORT || '47392'
 const BASE = `http://127.0.0.1:${PORT}`
+const SECRET = process.env.AGENT_FLEET_BROWSER_SECRET || ''
+const AUTH = { 'x-agent-fleet-secret': SECRET }
 const PROTOCOL_VERSION = '2024-11-05'
 
 let tools = []
@@ -24,7 +27,7 @@ function fail(id, code, message) {
 
 async function loadTools() {
   try {
-    const res = await fetch(`${BASE}/tools`)
+    const res = await fetch(`${BASE}/tools`, { headers: AUTH })
     const body = await res.json()
     tools = body.tools ?? []
   } catch {
@@ -35,7 +38,7 @@ async function loadTools() {
 async function callTool(name, args) {
   const res = await fetch(`${BASE}/call/${encodeURIComponent(AGENT)}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...AUTH },
     body: JSON.stringify({ name, args })
   })
   return res.json()

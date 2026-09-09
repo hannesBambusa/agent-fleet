@@ -37,6 +37,11 @@ function stateFor(p: HookPayload): SessionState | null {
 
 export function startHookServer(tailer: Tailer, onEvent?: (e: HookEvent) => void): Server {
   const server = createServer((req, res) => {
+    // hook scripts never set these; a web page always does. Nothing else should be posting state.
+    if (req.headers.origin || req.headers.referer) {
+      res.writeHead(403).end()
+      return
+    }
     if (req.method !== 'POST' || req.url !== '/hook') {
       res.writeHead(404).end()
       return
