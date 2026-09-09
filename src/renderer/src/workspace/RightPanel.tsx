@@ -1,0 +1,38 @@
+import { useState } from 'react'
+import type { Agent, Session } from '../../../shared/types'
+import { BrowserPane } from '../browser/BrowserPane'
+import { GitPane } from '../git/GitPane'
+
+type Tab = 'browser' | 'git'
+
+// the browser is a native view, so only one of these may be mounted at a time: unmounting the
+// browser pane is what parks its Chromium view out of the way
+export function RightPanel({ s, agent }: { s: Session; agent: Agent | null }): JSX.Element {
+  const [tab, setTab] = useState<Tab>(agent?.browser ? 'browser' : 'git')
+  return (
+    <div className="flex h-full w-full min-w-0 flex-1 flex-col bg-[var(--panel)]">
+      <div className="flex shrink-0 items-center gap-0 border-b border-[var(--line)] px-2">
+        <TabButton on={tab === 'browser'} onClick={() => setTab('browser')}>
+          browser
+        </TabButton>
+        <TabButton on={tab === 'git'} onClick={() => setTab('git')}>
+          git
+        </TabButton>
+      </div>
+      <div className="min-h-0 flex-1">
+        {tab === 'browser' ? <BrowserPane agent={agent} /> : <GitPane cwd={s.cwd} repoPath={s.repoPath} />}
+      </div>
+    </div>
+  )
+}
+
+function TabButton({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={`lbl border-b-2 px-3 py-2 ${on ? 'border-[var(--accent)] !text-[var(--fg)]' : 'border-transparent hover:!text-[var(--muted)]'}`}
+    >
+      {children}
+    </button>
+  )
+}

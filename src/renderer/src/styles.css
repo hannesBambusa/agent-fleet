@@ -1,0 +1,149 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* whole-UI scale; the terminal divides it out again so the pty keeps its own size */
+  --ui-scale: 1;
+  --ink: #0b0d10;
+  --panel: #12151a;
+  --raised: #171b21;
+  --line: #1f242c;
+  --fg: #e6e9ef;
+  --muted: #7c8592;
+  --dim: #444b56;
+  --accent: #5ee0a0;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --warn: #f2b84b;
+  --warn-soft: color-mix(in srgb, var(--warn) 16%, transparent);
+  --danger: #f2685c;
+}
+
+html, body, #root { height: 100%; }
+#root { zoom: var(--ui-scale); }
+.no-scale { zoom: calc(1 / var(--ui-scale)); }
+body { background: var(--ink); color: var(--fg); user-select: none; overflow: hidden; }
+.drag { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }
+.select { user-select: text; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 18%, var(--panel)); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 28%, var(--panel)); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes pulse-ring {
+  0% { r: var(--r0); opacity: 0.55; }
+  100% { r: var(--r1); opacity: 0; }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.node-pulse { animation: pulse-ring 1.8s ease-out infinite; }
+
+/* pulse-ring animates the SVG `r` attribute, so a plain element needs its own expanding ring */
+@keyframes ring-out {
+  0%   { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+.ring-pulse { animation: ring-out 1.9s ease-out infinite; }
+.node-breathe { animation: breathe 2.4s ease-in-out infinite; }
+.dot-blink { animation: blink 1.1s ease-in-out infinite; }
+
+/* OMA-style chrome */
+.lbl { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.chip { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--line); }
+.chip-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-soft); }
+.chip-waiting { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-soft); }
+.chip-idle { color: var(--muted); }
+.chip-stale { color: var(--dim); }
+.chip-exited { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+.card:hover { border-color: var(--muted); }
+/* selection must not look like running: state owns green and amber, selection is a neutral ring */
+.card-selected { border-color: var(--fg) !important; box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 55%, transparent) !important; }
+.field { appearance: none; background: var(--ink); border: 1px solid var(--line); color: var(--fg); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; padding: 5px 8px; border-radius: 3px; outline: none; }
+.field:focus { border-color: var(--accent); }
+
+/* a working agent should read as alive from across the room, not via one small badge */
+@keyframes card-live {
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 18px -4px color-mix(in srgb, var(--accent) 45%, transparent); }
+  50%      { box-shadow: 0 0 0 1px var(--accent), 0 0 26px -2px color-mix(in srgb, var(--accent) 70%, transparent); }
+}
+@keyframes card-wait {
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 50%, transparent), 0 0 18px -4px color-mix(in srgb, var(--warn) 35%, transparent); }
+  50%      { box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 90%, transparent), 0 0 28px -2px color-mix(in srgb, var(--warn) 60%, transparent); }
+}
+.card-running {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), color-mix(in srgb, var(--accent) 3%, transparent) 60%), var(--panel);
+  animation: card-live 2.6s ease-in-out infinite;
+}
+.card-waiting {
+  border-color: color-mix(in srgb, var(--warn) 60%, transparent) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warn) 14%, transparent), color-mix(in srgb, var(--warn) 4%, transparent) 60%), var(--panel);
+  animation: card-wait 1.5s ease-in-out infinite;
+}
+.card-quiet { opacity: 0.86; }
+
+/* the rail is dense, so a running row gets a moving sheen rather than a heavy glow */
+@keyframes rail-sweep {
+  0%   { background-position: -140% 0; }
+  100% { background-position: 240% 0; }
+}
+.rail-live {
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) var(--sweep, 10%), transparent) 45%, transparent);
+  background-size: 60% 100%;
+  background-repeat: no-repeat;
+  animation: rail-sweep 2.8s linear infinite;
+}
+
+/* a working agent has no known duration, so the bar reads as motion rather than progress */
+@keyframes work-slide {
+  0%   { transform: translateX(-60%) scaleX(0.35); }
+  50%  { transform: translateX(30%) scaleX(0.7); }
+  100% { transform: translateX(160%) scaleX(0.35); }
+}
+@keyframes work-shimmer {
+  0%   { background-position: 0% 0; }
+  100% { background-position: 200% 0; }
+}
+.work-track {
+  position: relative;
+  overflow: hidden;
+  background: var(--raised);
+}
+.work-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: work-slide 1.9s cubic-bezier(0.45, 0, 0.35, 1) infinite;
+}
+.work-track-wait::after {
+  background: linear-gradient(90deg, transparent, var(--warn), transparent);
+  animation-duration: 1.1s;
+}
+/* the thin line under the composer while a turn runs */
+.work-hairline {
+  background-image: linear-gradient(90deg, transparent, var(--accent) 45%, transparent 70%);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: work-shimmer 2.4s linear infinite;
+}
+
+/* subagents keep their own hue everywhere, so a busy rail says who is working, not just that
+   something is. Declared after .rail-live so it wins on source order. */
+.rail-live.rail-live-sub {
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--sub) var(--sub-soft, 16%), transparent) 45%, transparent);
+}
+.work-track-sub::after {
+  background: linear-gradient(90deg, transparent, var(--sub), transparent);
+}

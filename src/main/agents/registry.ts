@@ -1,0 +1,303 @@
+import { EventEmitter } from 'node:events'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { app } from 'electron'
+import { execFile } from 'node:child_process'
+import type { Agent, AgentStatus, LaunchRequest } from '../../shared/types'
+import type { PtyManager } from '../pty/manager'
+import { BROWSER_PORT } from '../browser/server'
+import { seedAuto } from '../git/seed'
+
+const FILE = (): string => join(app.getPath('userData'), 'agents.json')
+const SCRIPTS = (): string => join(app.getPath('userData'), 'launch')
+
+/** tmux session name for a detached agent; short and unambiguous */
+export function tmuxName(agentId: string): string {
+  return `af-${agentId.slice(0, 8)}`
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+// agents have the Claude in Chrome extension available too; without this they reach for it and open
+// a window outside the app, which the user cannot see in the browser pane
+const BROWSER_PROMPT = [
+  'You are running inside agent-fleet and have your own embedded browser pane,',
+  'visible to the user next to this session.',
+  'For anything web-related use the MCP tools named browser_navigate, browser_read_page,',
+  'browser_click, browser_type, browser_press, browser_scroll, browser_screenshot,',
+  'browser_get_url, browser_back, browser_read_console and browser_read_network.',
+  'Prefer them over claude-in-chrome or any other browser tool: only these are visible to the user.'
+].join(' ')
+
+// inline MCP config pointing this agent at its own browser pane; merged with the user's own servers
+function browserMcpConfig(agentId: string): string {
+  const script = app.isPackaged
+    ? join(process.resourcesPath, 'browser-mcp', 'server.mjs')
+    : join(app.getAppPath(), 'resources', 'browser-mcp', 'server.mjs')
+  return JSON.stringify({
+    mcpServers: {
+      browser: {
+        command: 'node',
+        args: [script],
+        env: { AGENT_FLEET_AGENT: agentId, AGENT_FLEET_BROWSER_PORT: String(BROWSER_PORT) }
+      }
+    }
+  })
+}
+
+export class AgentRegistry extends EventEmitter {
+  private agents = new Map<string, Agent>()
+  private wasLive = new Set<string>()
+  // agents this app has actually spawned a pty for, so a not-yet-started one is never called dead
+  private spawned = new Set<string>()
+
+  constructor(private ptys: PtyManager) {
+    super()
+    try {
+      const list = JSON.parse(readFileSync(FILE(), 'utf8')) as Agent[]
+      for (const a of list) {
+        // the repo was deleted or moved: the agent can never be resumed, so do not keep listing it
+        if (!existsSync(a.repoPath)) continue
+        if (a.status !== 'exited' || a.interrupted) this.wasLive.add(a.id)
+        this.agents.set(a.id, { ...a, status: 'exited' })
+      }
+      this.save()
+    } catch {
+      // first run
+    }
+    ptys.on('exit', (id: string, code: number) => {
+      const a = this.agents.get(id)
+      if (!a) return
+      a.status = 'exited'
+      a.exitCode = code
+      this.save()
+      this.emit('update', a)
+    })
+  }
+
+  list(): Agent[] {
+    // An agent whose pty is gone is not "starting" or "live", whatever the last event claimed. Only
+    // ones this app actually spawned count: `launch` saves the record before spawning, and saving
+    // walks this list, so judging every agent here declared each new one dead a moment after birth.
+    for (const a of this.agents.values()) {
+      // a detached agent lives in tmux, so a missing pty only means nobody is watching it
+      if (a.detached) continue
+      if (a.status !== 'exited' && this.spawned.has(a.id) && !this.ptys.alive(a.id)) a.status = 'exited'
+    }
+    return [...this.agents.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  get(id: string): Agent | undefined {
+    return this.agents.get(id)
+  }
+
+  launch(req: LaunchRequest, cols: number, rows: number): Agent {
+    const sessionId = req.resumeSessionId ?? randomUUID()
+    const wanted = req.name || slugFrom(req.prompt) || 'agent'
+    // Claude Code refuses to create a worktree whose directory already exists, and an abandoned one
+    // from an earlier run keeps its name, so the launch died on the spot with nothing on screen.
+    const name = req.worktree ? freeWorktreeName(req.repoPath, wanted) : wanted
+    const a: Agent = {
+      id: randomUUID(),
+      sessionId,
+      repoPath: req.repoPath,
+      repoName: basename(req.repoPath),
+      cwd: null,
+      name,
+      prompt: req.prompt,
+      worktree: req.worktree,
+      browser: req.browser,
+      chat: req.chat,
+      detached: req.detached,
+      status: 'starting',
+      exitCode: null,
+      createdAt: new Date().toISOString()
+    }
+    this.agents.set(a.id, a)
+    this.save()
+    this.spawn(a, req.resumeSessionId ? 'resume' : 'new', cols, rows)
+    this.emit('update', a)
+    return a
+  }
+
+  resume(id: string, cols: number, rows: number): Agent | undefined {
+    const a = this.agents.get(id)
+    if (!a || this.ptys.alive(id)) return a
+    a.status = 'starting'
+    a.exitCode = null
+    a.interrupted = false
+    this.wasLive.delete(id)
+    // no cwd recorded means Claude never wrote a transcript: nothing to resume, start it over
+    this.spawn(a, a.cwd ? 'resume' : 'new', cols, rows)
+    this.emit('update', a)
+    return a
+  }
+
+  stop(id: string): void {
+    const a = this.agents.get(id)
+    // detaching a tmux client would leave the session running; stop means stop
+    if (a?.detached) this.killTmux(id)
+    this.ptys.kill(id)
+  }
+
+  private killTmux(id: string): void {
+    execFile('tmux', ['kill-session', '-t', tmuxName(id)], () => undefined)
+  }
+
+  /** which detached agents still have a tmux session, so the app can tell live from gone */
+  syncDetached(alive: Set<string>): void {
+    for (const a of this.agents.values()) {
+      if (!a.detached) continue
+      const up = alive.has(tmuxName(a.id))
+      const next: AgentStatus = up ? (a.status === 'starting' ? 'starting' : 'live') : 'exited'
+      if (a.status !== next) {
+        a.status = next
+        this.emit('update', a)
+      }
+    }
+  }
+
+  remove(id: string): void {
+    if (this.agents.get(id)?.detached) this.killTmux(id)
+    this.ptys.kill(id)
+    this.agents.delete(id)
+    this.save()
+    this.emit('removed', id)
+  }
+
+  /**
+   * Claude Code hands a resumed session a fresh id when the original is still running, so the id
+   * the app asked for never appears on disk and the agent ends up on screen twice: one card with
+   * the terminal, one with the transcript. Pointing the agent at the session that actually exists
+   * puts them back together.
+   */
+  rebind(id: string, sessionId: string, cwd: string): void {
+    const a = this.agents.get(id)
+    if (!a || a.sessionId === sessionId) return
+    a.sessionId = sessionId
+    a.cwd = cwd
+    a.status = 'live'
+    this.save()
+    this.emit('update', a)
+  }
+
+  markLive(id: string, cwd: string): void {
+    const a = this.agents.get(id)
+    if (!a) return
+    let changed = false
+    if (a.cwd !== cwd) {
+      a.cwd = cwd
+      changed = true
+    }
+    if (a.status === 'starting') {
+      a.status = 'live'
+      changed = true
+    }
+    if (changed) {
+      this.save()
+      this.emit('update', a)
+    }
+  }
+
+  // called right before the app kills every pty on quit
+  markInterrupted(): void {
+    // a detached agent is not interrupted by quitting; it keeps running without us
+    for (const a of this.agents.values()) if (a.status !== 'exited' && !a.detached) a.interrupted = true
+    this.save()
+  }
+
+  // agents that were alive when the app last quit; resumed on startup
+  interrupted(): Agent[] {
+    return this.list().filter((a) => a.status === 'exited' && this.wasLive.has(a.id))
+  }
+
+  private spawn(a: Agent, mode: 'new' | 'resume', cols: number, rows: number): void {
+    const args: string[] = []
+    if (a.browser) {
+      args.push('--mcp-config', shellQuote(browserMcpConfig(a.id)))
+      args.push('--append-system-prompt', shellQuote(BROWSER_PROMPT))
+    }
+    if (mode === 'resume') args.push('--resume', a.sessionId)
+    else {
+      args.push('--session-id', a.sessionId, '--name', shellQuote(a.name))
+      if (a.worktree) args.push('--worktree', shellQuote(a.name))
+      if (a.prompt) args.push(shellQuote(a.prompt))
+    }
+    this.spawned.add(a.id)
+    const claude = `claude ${args.join(' ')}`
+    const cwd = mode === 'resume' && a.cwd ? a.cwd : a.repoPath
+
+    // A detached agent runs inside tmux: the app's terminal is only a client, so closing the app
+    // detaches instead of killing, and `new-session -A` reattaches to whatever is still alive.
+    let command = claude
+    if (a.detached) {
+      mkdirSync(SCRIPTS(), { recursive: true })
+      const script = join(SCRIPTS(), `${a.id}.sh`)
+      writeFileSync(script, `#!/bin/bash\ncd ${shellQuote(cwd)}\nexec ${claude}\n`)
+      chmodSync(script, 0o755)
+      command = `tmux new-session -A -s ${tmuxName(a.id)} -x ${cols} -y ${rows} ${shellQuote(script)}`
+    }
+
+    this.ptys.spawn(a.id, { cwd, cols, rows, command, env: { AGENT_FLEET_AGENT: a.id } })
+    if (a.worktree && mode === 'new') void this.seedWhenReady(a)
+  }
+
+  /**
+   * A worktree is a fresh checkout: everything git ignores is missing from it, `.env` included, and
+   * the agent discovers that on its first command. Claude Code creates the directory itself, a second
+   * or two after launch, so this waits for it to appear and then carries the config across.
+   */
+  private async seedWhenReady(a: Agent): Promise<void> {
+    const dir = join(a.repoPath, '.claude', 'worktrees', a.name)
+    for (let i = 0; i < 120; i++) {
+      if (!this.agents.has(a.id)) return
+      if (existsSync(dir)) {
+        // the directory appears before the checkout is finished, so let it settle
+        await new Promise((r) => setTimeout(r, 1500))
+        try {
+          const done = await seedAuto(a.repoPath, dir)
+          if (done.length) {
+            a.seeded = done
+            this.save()
+            this.emit('update', a)
+          }
+        } catch (err) {
+          console.error('[agents] seed failed', err)
+        }
+        return
+      }
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+  }
+
+  private save(): void {
+    try {
+      writeFileSync(FILE(), JSON.stringify(this.list(), null, 2))
+    } catch (err) {
+      console.error('[agents] save failed', err)
+    }
+  }
+}
+
+/** the first unused worktree name in this repo: agent, then agent-2, agent-3 … */
+function freeWorktreeName(repoPath: string, wanted: string): string {
+  const dir = (n: string): string => join(repoPath, '.claude', 'worktrees', n)
+  if (!existsSync(dir(wanted))) return wanted
+  for (let i = 2; i < 50; i++) {
+    if (!existsSync(dir(`${wanted}-${i}`))) return `${wanted}-${i}`
+  }
+  return `${wanted}-${Date.now()}`
+}
+
+function slugFrom(prompt: string): string {
+  return prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .split('-')
+    .slice(0, 4)
+    .join('-')
+}

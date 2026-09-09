@@ -1,0 +1,338 @@
+import { EventEmitter } from 'node:events'
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import type { Session, SessionState } from '../../shared/types'
+import { applyLine } from './parse'
+import { topicFor } from './topics'
+import { Liveness } from './liveness'
+
+const PROJECTS = join(homedir(), '.claude', 'projects')
+const POLL_MS = 600
+const STALE_MS = 15 * 60 * 1000
+const ENDED_MS = 24 * 60 * 60 * 1000
+// an idle or ended claim stays true until something contradicts it
+const HOOK_IDLE_MS = 10 * 60 * 1000
+// a running claim is only about the moment it was made: without a fresh one, fall back to the log
+const HOOK_RUN_MS = 45 * 1000
+// files older than this are not parsed at all on startup
+const HISTORY_MS = 3 * 24 * 60 * 60 * 1000
+// a session this fresh is live even if the process scan has not caught up
+const GRACE_MS = 90 * 1000
+// a subagent writes to its log only while it works, so recent output means it is still running
+const SUBAGENT_ACTIVE_MS = 60 * 1000
+// a session that just finished a tool call is thinking about the next one, not idle
+const BETWEEN_TOOLS_MS = 25 * 1000
+// after the last words of an answer, a session is waiting for its human again
+const ANSWER_SETTLE_MS = 12 * 1000
+// the longest a single tool call is assumed to still be running when nothing has followed it
+const OPEN_TOOL_MS = 10 * 60 * 1000
+
+interface Tracked {
+  session: Session
+  offset: number
+  rest: string
+}
+
+interface SubagentMeta {
+  agentType?: string
+  description?: string
+  parentAgentId?: string
+  spawnDepth?: number
+}
+
+export class Tailer extends EventEmitter {
+  private files = new Map<string, Tracked>()
+  private timer: NodeJS.Timeout | null = null
+  private live = new Liveness()
+  // sessions this app launched and still holds a pty for: never guessed about
+  private owned = new Set<string>()
+
+  start(): void {
+    this.live.start()
+    this.scan()
+    this.timer = setInterval(() => this.scan(), POLL_MS)
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.live.stop()
+  }
+
+  setOwned(ids: string[]): void {
+    this.owned = new Set(ids)
+  }
+
+  list(): Session[] {
+    return [...this.files.values()].map((t) => t.session)
+  }
+
+  get(id: string): Session | undefined {
+    for (const t of this.files.values()) if (t.session.id === id) return t.session
+    return undefined
+  }
+
+  applyHook(id: string, state: SessionState, at: string, tool?: string, clearTool = false): void {
+    const s = this.get(id)
+    if (!s) return
+    s.hookState = { state, at, tool }
+    if (clearTool) s.currentTool = null
+    else if (tool) s.currentTool = tool
+    this.recompute(s)
+    this.emit('update', s)
+  }
+
+  private scan(): void {
+    let dirs: string[] = []
+    try {
+      dirs = readdirSync(PROJECTS)
+    } catch {
+      return
+    }
+    const now = Date.now()
+    const changed = new Set<Session>()
+    for (const dir of dirs) {
+      const projectDir = join(PROJECTS, dir)
+      let names: string[] = []
+      try {
+        names = readdirSync(projectDir).filter((n) => n.endsWith('.jsonl'))
+      } catch {
+        continue
+      }
+      for (const name of names) {
+        const sessionId = basename(name, '.jsonl')
+        this.track(join(projectDir, name), dir, sessionId, null, now, changed)
+        // subagents live in <project>/<sessionId>/subagents/agent-<id>.jsonl
+        const subDir = join(projectDir, sessionId, 'subagents')
+        let subs: string[] = []
+        try {
+          subs = readdirSync(subDir).filter((n) => n.startsWith('agent-') && n.endsWith('.jsonl'))
+        } catch {
+          continue
+        }
+        for (const sub of subs) this.track(join(subDir, sub), dir, sessionId, sub.slice('agent-'.length, -'.jsonl'.length), now, changed)
+      }
+    }
+    this.markDead()
+    for (const t of this.files.values()) {
+      const before = t.session.state
+      this.recompute(t.session)
+      if (t.session.state !== before) changed.add(t.session)
+    }
+    for (const s of changed) {
+      if (!s.parentId) s.topic = topicFor(s.id, s.cwd)
+      this.emit('update', s)
+    }
+  }
+
+  private track(file: string, dir: string, sessionId: string, agentId: string | null, now: number, changed: Set<Session>): void {
+    let size: number
+    let mtime: number
+    try {
+      const st = statSync(file)
+      size = st.size
+      mtime = st.mtimeMs
+    } catch {
+      return
+    }
+    let t = this.files.get(file)
+    if (!t) {
+      if (now - mtime > HISTORY_MS) return
+      t = { session: this.blank(file, dir, sessionId, agentId), offset: 0, rest: '' }
+      this.files.set(file, t)
+    }
+    if (agentId && !t.session.agentType) this.readMeta(t.session, file)
+    if (size > t.offset) {
+      this.readFrom(t, file, size)
+      changed.add(t.session)
+    } else if (size < t.offset) {
+      const fresh = { session: this.blank(file, dir, sessionId, agentId), offset: 0, rest: '' }
+      this.files.set(file, fresh)
+      if (agentId) this.readMeta(fresh.session, file)
+      this.readFrom(fresh, file, size)
+      changed.add(fresh.session)
+    }
+  }
+
+  private readMeta(s: Session, file: string): void {
+    const metaFile = file.replace(/\.jsonl$/, '.meta.json')
+    if (!existsSync(metaFile)) return
+    try {
+      const m = JSON.parse(readFileSync(metaFile, 'utf8')) as SubagentMeta
+      s.agentType = m.agentType ?? 'agent'
+      s.topic = m.description ?? s.topic
+      s.parentAgentId = m.parentAgentId ?? null
+      s.depth = m.spawnDepth ?? 1
+    } catch {
+      // meta not fully written yet; retried next scan
+    }
+  }
+
+  private readFrom(t: Tracked, file: string, size: number): void {
+    const fd = openSync(file, 'r')
+    try {
+      const len = size - t.offset
+      const buf = Buffer.alloc(len)
+      readSync(fd, buf, 0, len, t.offset)
+      t.offset = size
+      const text = t.rest + buf.toString('utf8')
+      const lines = text.split('\n')
+      t.rest = lines.pop() ?? ''
+      for (const line of lines) if (line.trim()) applyLine(t.session, line)
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  private blank(file: string, dir: string, sessionId: string, agentId: string | null): Session {
+    const cwd = '/' + dir.replace(/^-/, '').replace(/-/g, '/')
+    return {
+      id: agentId ?? sessionId,
+      origin: agentId ? 'subagent' : undefined,
+      parentId: agentId ? sessionId : null,
+      parentAgentId: null,
+      agentType: null,
+      depth: agentId ? 1 : 0,
+      file,
+      cwd,
+      repoPath: cwd,
+      repo: basename(cwd),
+      worktree: null,
+      branch: null,
+      topic: null,
+      model: null,
+      version: null,
+      lastCommand: null,
+      lastCommandAt: null,
+      lastPrompt: null,
+      lastPromptAt: null,
+      lastEventAt: null,
+      firstEventAt: null,
+      turns: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      context: 0,
+      currentTool: null,
+      state: 'idle',
+      closed: false,
+      hookState: null,
+      transcript: []
+    }
+  }
+
+  /**
+   * Only the N most recently active sessions in a directory can be the N live `claude` processes
+   * there. Everything older in that directory belonged to a terminal that has since been closed.
+   */
+  private markDead(): void {
+    if (this.live.unknown) return
+    const groups = new Map<string, Session[]>()
+    for (const t of this.files.values()) {
+      const s = t.session
+      if (s.parentId) continue
+      s.repoPath = worktreeOf(s.cwd)?.root ?? s.cwd
+      groups.set(s.cwd, [...(groups.get(s.cwd) ?? []), s])
+    }
+    const now = Date.now()
+    const closedRoots = new Set<string>()
+    for (const [cwd, list] of groups) {
+      const alive = this.live.countFor(cwd)
+      list.sort((a, b) => (b.lastEventAt ?? '').localeCompare(a.lastEventAt ?? ''))
+      list.forEach((s, i) => {
+        const fresh = s.lastEventAt ? now - Date.parse(s.lastEventAt) < GRACE_MS : false
+        s.closed = i >= alive && !fresh && !this.owned.has(s.id)
+        if (s.closed) closedRoots.add(s.id)
+      })
+    }
+    // a subagent cannot outlive the session that spawned it
+    for (const t of this.files.values()) {
+      const s = t.session
+      if (s.parentId) s.closed = closedRoots.has(s.parentId)
+    }
+  }
+
+  private recompute(s: Session): void {
+    const wt = worktreeOf(s.cwd)
+    s.repoPath = wt ? wt.root : s.cwd
+    s.worktree = wt ? wt.name : null
+    s.repo = basename(s.repoPath)
+    const now = Date.now()
+    const last = s.lastEventAt ? Date.parse(s.lastEventAt) : 0
+    const age = now - last
+    if (s.closed) {
+      s.state = 'ended'
+      return
+    }
+    if (age > ENDED_MS) {
+      s.state = 'ended'
+      return
+    }
+    if (s.hookState) {
+      const said = now - Date.parse(s.hookState.at)
+      const h = s.hookState.state
+      if (h === 'ended' && said < HOOK_IDLE_MS) {
+        s.state = 'ended'
+        return
+      }
+      if (h === 'idle' && said < HOOK_IDLE_MS) {
+        s.state = age > STALE_MS ? 'stale' : 'idle'
+        return
+      }
+      // a stale "running" claim is worse than no claim: it pins a finished agent green forever
+      if ((h === 'running' || h === 'waiting') && said < HOOK_RUN_MS) {
+        s.state = h
+        return
+      }
+    }
+    if (age > STALE_MS) {
+      s.state = 'stale'
+      return
+    }
+    // a subagent has no user to wait for: between two tool calls it is thinking, not idle
+    if (s.parentId) {
+      s.state = age < SUBAGENT_ACTIVE_MS ? 'running' : 'idle'
+      return
+    }
+    if (working(s, now)) {
+      s.state = 'running'
+      return
+    }
+    // nothing is running, so nothing is "currently" a tool either
+    s.currentTool = null
+    s.state = 'idle'
+  }
+}
+
+/**
+ * Is a session mid-turn with no tool open? Without the hooks installed there is no explicit signal,
+ * so the shape of the last thing it wrote has to answer it: a finished tool call means it is
+ * deciding what to do next, a fresh prompt means it has not started, and words that have stopped
+ * coming mean the turn is over and the human is up.
+ */
+function working(s: Session, now: number): boolean {
+  const last = s.transcript[s.transcript.length - 1]
+  if (!last) return false
+  // Age against the last thing that was *said*, not the session's newest line: resuming a session
+  // writes bookkeeping lines with fresh timestamps, and judging against those makes a conversation
+  // that ended hours ago look like it is mid-thought.
+  const age = now - Date.parse(last.ts)
+  // An open tool call is the strongest sign of work, but only while it could still be running. A
+  // session killed mid-call leaves one open forever, which is what made every agent look busy
+  // after a restart.
+  if (last.kind === 'tool') {
+    // The generous window is for a genuinely slow call, where nothing else has been written since.
+    // If the session has written other lines after it, the call almost certainly finished and its
+    // result simply was not in a shape the parser recognised, so decay like any other pause.
+    const wroteSince = s.lastEventAt ? Date.parse(s.lastEventAt) - Date.parse(last.ts) : 0
+    return age < (wroteSince > 5000 ? BETWEEN_TOOLS_MS : OPEN_TOOL_MS)
+  }
+  if (last.kind === 'result') return age < BETWEEN_TOOLS_MS
+  if (last.kind === 'prompt' || last.kind === 'command') return age < BETWEEN_TOOLS_MS
+  if (last.kind === 'text') return age < ANSWER_SETTLE_MS
+  return false
+}
+
+function worktreeOf(cwd: string): { root: string; name: string } | null {
+  const parent = dirname(cwd)
+  if (basename(parent) !== 'worktrees' || basename(dirname(parent)) !== '.claude') return null
+  return { root: dirname(dirname(parent)), name: basename(cwd) }
+}

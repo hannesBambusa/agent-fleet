@@ -1,0 +1,194 @@
+# agent-fleet
+
+| | |
+|---|---|
+| **Status** | in progress |
+| **Branch** | `main` |
+| **Updated** | 2026-09-09 |
+| **Scope** | Electron + TypeScript Mac app that observes every Claude Code session on the machine and launches new ones, each with its own worktree, branch and embedded browser. M1 observer and M2 launched agents built; M3 diff pane next. |
+
+Planned 2026-09-08 from an interview with Hannes. Scaffold built the same day. Paths under
+`## Files` marked *(intended)* do not exist yet.
+
+## Files
+
+**Owned** — only this feature writes here (whole repo is this feature):
+
+- `package.json`, `pnpm-lock.yaml`, `electron.vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `tsconfig.web.json`, `tailwind.config.js`, `postcss.config.js`, `.gitignore` — scaffold
+- `src/shared/types.ts` — `Session`, `TranscriptItem`, `HookEvent` shared by main and renderer
+- `src/main/index.ts` — window, IPC wiring (`sessions:list`, `sessions:update`, `hooks:event`)
+- `src/main/sessions/{tailer,parse,topics,liveness}.ts` — JSONL tailer (root sessions + subagents) + line parser + topic lookup
+- `src/main/hooks/server.ts` — hook HTTP listener on 127.0.0.1:47391
+- `src/main/hooks/installer.ts` — status / install (native confirm) / uninstall of the hook entries in `~/.claude/settings.json`
+- `resources/hooks/agent-fleet.sh` — the hook script the installer copies to `~/.claude/hooks/`
+- `resources/browser-mcp/server.mjs` — dependency-free MCP stdio shim run by each agent (`node`), proxies tool calls to port 47392
+- `src/main/pty/manager.ts` — node-pty spawn/write/resize/kill, runs commands via `$SHELL -lc`
+- `src/main/agents/registry.ts` — launched agents: persist, spawn `claude`, resume, stop, remove
+- `src/main/repos/registry.ts` — repo list + per-repo defaults, auto-seeded from session cwds
+- `src/main/browser/{manager,tools,server}.ts` — WebContentsView per agent, tool implementations, local control server (47392)
+- `src/preload/index.ts`, `src/preload/index.d.ts` — `window.api`: `listSessions`, `onSessionUpdate`, `onHookEvent`
+- `src/renderer/index.html`, `src/renderer/src/{main.tsx,App.tsx,styles.css}` — React shell, design tokens, keyframes
+- `src/renderer/src/state/{sessions,hooks}.ts` — `useSessions()`, `useHookStatus()`
+- `src/renderer/src/lib/{format,useNow}.ts` — age/token/model formatting, 1 s clock
+- `src/renderer/src/fleet/{TopBar,Filters,graph.ts,Canvas,DetailPanel,FleetWaterfall,FleetView}.tsx` — fleet screen (OMA-style)
+- `src/renderer/src/workspace/{Workspace,Transcript,Waterfall}.tsx` — right pane
+- `src/renderer/src/browser/BrowserPane.tsx` — URL bar + the rectangle the native view is positioned into
+- `src/renderer/src/terminal/Terminal.tsx` — xterm.js pane, one instance per agent kept alive across tab switches
+- `src/renderer/src/launch/LaunchDialog.tsx` — ⌘N dialog
+- `src/renderer/src/state/agents.ts` — `useAgents()`, `useRepos()` *(intended, same dir)*: sidebar tree, state strip, workspace (terminal / transcript, Monaco diff, browser pane), launch dialog, per-repo settings
+- `src/browser-mcp/**` *(intended)* — stdio MCP server the app registers per launched agent; talks to the main process over a local socket to drive that agent's `WebContentsView`
+
+**Shared** — outside the repo, written by the app at runtime with user confirmation:
+
+- `~/.claude/settings.json` — the app appends its hook entries (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `SessionStart`). Already carries Hannes's own `PreToolUse`, `UserPromptSubmit`, `Stop` hooks; additive only, never replace
+- `~/.claude/projects/<slug>/<session>.jsonl` — read only, never written
+- `~/.claude/topics/` — read only, session labels from `set-topic.sh`
+- App state `repos.json`, `agents.json` — `app.getPath('userData')`: always `~/Library/Application Support/agent-fleet/` (pinned in main)
+
+## Built
+
+**Scaffold.** electron-vite 2 + Electron 33 + React 18 + Tailwind 3 + TS, pnpm. `pnpm dev` / `pnpm build` / `pnpm typecheck` all pass; built app opens a 1440×900 frameless dark window (`titleBarStyle: hiddenInset`), `hiddenInset` traffic lights, CSP set, external links open in the system browser. Design tokens (`--ink --panel --line --fg --muted --accent --warn --danger`) live in `src/renderer/src/styles.css`; `.drag` / `.no-drag` utilities for the custom title bar. Files: `src/main/index.ts`, `src/renderer/src/App.tsx`, `src/renderer/src/styles.css`, `electron.vite.config.ts`.
+
+**JSONL tailer.** Polls `~/.claude/projects/*/*.jsonl` every 1 s, reads only appended bytes, restarts a file that shrank. Skips files untouched for 3 days on startup. Per session: cwd, repo, `gitBranch`, model, version, last slash command (from `<command-name>`), last prompt, token totals, current tool (set on `tool_use`, cleared on `tool_result`), a 400-item transcript ring (`prompt | command | text | tool | result`). State: `ended` >24 h, `stale` >15 min, else `running` when a tool is open, else `idle`; a hook-pushed state wins for 10 min. Sidechain (subagent) lines ignored. Files: `src/main/sessions/tailer.ts`, `src/main/sessions/parse.ts`.
+
+**Topic lookup.** `~/.claude/topics/<sessionId>.topic`, falling back to the cwd-keyed file `set-topic.sh` writes. `src/main/sessions/topics.ts`
+
+**Hook listener.** `POST 127.0.0.1:47391/hook` with the raw hook JSON. Maps `SessionStart | UserPromptSubmit | PreToolUse | PostToolUse` → running, `Notification(permission_prompt)` → waiting, `Stop` → idle, `SessionEnd` → ended; unknown sessions ignored. Verified with curl (204). Script to forward events: `resources/hooks/agent-fleet.sh` (curl, 1 s timeout, never fails the hook). Files: `src/main/hooks/server.ts`.
+
+**Fleet screen (OMA Run Viewer look).** Default screen. Title bar `// AGENT FLEET`, uppercase mono stat cells (status, sessions, running, waiting for you, launched here, input/output tokens, models), then tabs `graph | waterfall`, search box and status / origin / repo selects with a reset button and `N / M sessions`. **Graph**: repo cards in a left column, one session card per row to the right, elbow edges with arrowheads, newest repo group first. Card = origin label (green when launched here) + state chip, title (topic, else first prompt line with markdown stripped, else repo), `wt:<name>` or branch + last command, output tokens · age, and a third line: current tool (green), "needs your approval" (amber) or the last prompt. Click selects, double-click opens. **Waterfall**: one row per session, tool calls of the last 30 min as bars on a shared axis. **Detail panel** (right, 360 px): title + chip, open button, key/value grid (kind, repo, branch/worktree, last command, model, tool calls, turns, current, tokens, context, activity, started, id, cwd), compact tail of the transcript. Files: `src/renderer/src/fleet/*`.
+
+**Single screen with a draggable divider** (revised again at Hannes's request): left pane = fleet (graph/waterfall + filters) at a persisted width (`localStorage agent-fleet.fleetWidth`, default 900); below 520 px it switches to the compact rail automatically. Right pane = the opened agent's workspace, or the hover detail panel when nothing is open. Divider drag resizes, double-click toggles compact. Clicking a card opens it in place; the fleet never disappears. **Agent screen (old two-screen mode, superseded).** Had a 220 px rail on the left (`src/renderer/src/fleet/Rail.tsx`): every session grouped by repo, state dot (square for launched), name, current tool or last command, age; click switches agent, the `// fleet` header goes back. Opening a card (double-click, "open", or a fresh launch) swaps the fleet screen for the workspace (terminal or transcript, waterfall, browser slot) with a `// fleet / <name>` breadcrumb; Esc or the breadcrumb goes back. Header uses the same chips. `src/renderer/src/App.tsx`, `src/renderer/src/workspace/Workspace.tsx`
+
+**Workspace.** Header: topic (falls back to repo), repo · branch, last command chip, state or current tool. Stat row: model, turns, tokens, out, cache, last, since, cwd. Transcript: live-tailed, sticks to bottom unless scrolled up, prompts highlighted, commands as chips, tool calls and results collapsed to one line and expand on click, errors red. Waterfall: last 40 tool calls as bars on a shared time axis, paired tool→result, open calls run to now, colour by tool. Files: `src/renderer/src/workspace/*.tsx`.
+
+**Hook installer.** `hooks:status` reports which of `SessionStart UserPromptSubmit PreToolUse PostToolUse Notification Stop SessionEnd` lack an entry running `bash ~/.claude/hooks/agent-fleet.sh`. `hooks:install` shows a native dialog listing exactly what will be added, then copies the script and appends one `{matcher:"", hooks:[…]}` per missing event; backs up to `settings.json.agent-fleet.bak`; never edits existing entries. `hooks:uninstall` removes only entries with our command. **Install click not yet exercised against the real settings file** (code path reviewed, dialog verified to build). `src/main/hooks/installer.ts`
+
+**Launched agents (M2).** ⌘N or "+ agent" opens the launch dialog: repo chips (auto-seeded from every session cwd that has `.git`, plus "+ folder" via native picker), prompt, name (auto-slug from prompt), worktree and browser toggles defaulting from the repo. Launch spawns `$SHELL -lc "claude --session-id <uuid> --name <n> [--worktree <n>] [<prompt>]"` in the repo through node-pty, so PATH, auth and your statusline are exactly iTerm's. The uuid is the JSONL file name, so the tailer links the session with no guessing; until the file appears the agent shows as a placeholder node on the map. A fresh agent takes focus. Workspace for an agent: terminal | transcript toggle, stop / resume (`claude --resume <id>`) / open folder. Exit code shown when the process ends. Quit with live agents shows a native "N agents still running" dialog, Cancel default. `agents.json` persists across restarts with status reset to exited. Verified: smoke agent launched into a throwaway repo, Claude Code's trust dialog rendered and interactive inside the app. Files: `src/main/agents/registry.ts`, `src/main/pty/manager.ts`, `src/main/repos/registry.ts`, `src/renderer/src/launch/LaunchDialog.tsx`, `src/renderer/src/terminal/Terminal.tsx`.
+
+**Worktree sessions group under their repo.** A cwd of `<repo>/.claude/worktrees/<name>` sets `Session.repoPath` to the repo and `Session.worktree` to the name; the map clusters by `repoPath`. `src/main/sessions/tailer.ts`
+
+**Auto-resume.** `Agent.cwd` is learned from the session's JSONL (the worktree dir), persisted, and used as cwd for `--resume`. Live agents are flagged `interrupted` on quit and resumed 0.8 s after the next start. `src/main/agents/registry.ts`, `src/main/index.ts`
+
+**Chat view.** A third view of a session next to terminal and transcript, and the default for new agents. Turns are grouped from the transcript: your prompts as right-aligned bubbles, Claude's text on the left, tool calls folded into one expandable line each with its output. The composer types straight into the pty using bracketed paste plus a carriage return, so multi-line prompts survive and Claude Code stays the engine — nothing is re-implemented. Enter sends, shift+enter is a newline. When a session goes to `waiting` an amber bar offers to jump to the terminal, since approvals are drawn by the TUI and cannot be answered from chat. A watched session gets the same reading view with the composer replaced by a note. Chosen per launch (`Agent.chat`, remembered as the dialog default) and switchable at any time from the agent header. `src/renderer/src/workspace/ChatView.tsx`
+
+**Browser pane (M4).** Each launched agent with `browser: true` gets a `WebContentsView` on `persist:agent-<id>` (own cookies and logins), added as a native child of the window; the renderer reports the pane's rectangle so the view sits exactly over it. CDP is attached per view for screenshots, key events and network capture; console messages and requests are kept in 200-item rings. The agent drives it through an MCP server registered at launch via `--mcp-config` (merged with the user's own servers, not replacing them): `browser_navigate click type press scroll screenshot read_page get_url back read_console read_network`. The shim (`resources/browser-mcp/server.mjs`) is dependency-free JSON-RPC over stdio and proxies to the app's control server on 127.0.0.1:47392, so it degrades to a clear error when the app is closed. URL bar and back button in the pane header; a `browser` toggle in the agent header; the pane hides itself when the agent pane is narrower than 700 px. **Verified end to end via the control server**: navigate + read_page returned the real page at localhost:3003 (title, text, interactive elements), click correctly refused a missing element, read_console returned the page's own vite logs. **Not yet verified visually** — macOS blocked the script that raises the window, so no screenshot of the pane was taken in that session. Files: `src/main/browser/*`, `resources/browser-mcp/server.mjs`, `src/renderer/src/browser/BrowserPane.tsx`.
+
+**History timeline.** Third fleet tab. Subagent runs of the last 1–24 h (window picked from the data) drawn as a flow over a time axis, in the style of the multi-agent diagrams Hannes referenced: the root session is a grey circle on the left, each subagent a coloured circle at its start time with a track showing how long it ran, joined by curved dotted edges. Circle size follows output tokens, colour is hashed from the agent type, live runs glow and breathe. Labels carry type, duration, output tokens and start time. Hover fills the detail panel, click opens the log. `src/renderer/src/fleet/FleetHistory.tsx`
+
+**Liveness.** Claude Code appends to its transcript and closes the file again, so an open handle cannot separate a live session from one whose terminal was closed hours ago; every session of the last three days looked open (41 cards for 7 real sessions). Every 4 s `pgrep -x claude` plus `lsof -d cwd` counts running processes per directory; in each directory only the N most recently active sessions stay, the rest get `closed: true` and drop out as `ended`. Subagents inherit their root's closed flag. A session with activity in the last 90 s is never hidden, and if the scan returns nothing (no permission, no processes) nothing is hidden at all. Verified against the live machine: 41 tracked sessions became 7, matching `lsof` exactly. `src/main/sessions/liveness.ts`
+
+**Subagents.** Claude Code writes each subagent to `<project>/<sessionId>/subagents/agent-<agentId>.jsonl` with a sibling `.meta.json` holding `agentType`, `description`, `parentAgentId`, `spawnDepth`. The tailer walks those too, so a subagent is a `Session` with `origin: 'subagent'`, `parentId` (root session) and `parentAgentId` (spawning subagent, null at depth 1). Graph draws them as dashed purple cards in columns to the right of their parent, `blockHeight` reserving vertical space per subtree so siblings never overlap. Parent cards carry a `−N` badge; subtrees are **open by default** and the badge collapses them. Only subagents that are running or waiting get a card; finished ones live in the history tab. Clicking a subagent card opens its full log in the right pane. Filters gained a "Subagents" origin, and matching a subagent keeps its ancestors on the canvas. Top bar counts roots as "sessions" and subagents separately. Files: `src/main/sessions/tailer.ts`, `src/renderer/src/fleet/{graph.ts,Canvas.tsx}`.
+
+**Trust-aware launch.** `Repo.trusted` is read from `~/.claude.json` `projects[path].hasTrustDialogAccepted` on every list. The launch dialog forces the worktree toggle off for an untrusted repo and says why, so the first launch shows Claude's trust dialog in the pane and the next launch can use `--worktree`. `src/main/repos/registry.ts`, `src/renderer/src/launch/LaunchDialog.tsx`
+
+**Exited agents stay visible.** Placeholder node in `stale` colour, workspace shows the terminal with the last 200 KB of pty output replayed from main (`pty:history`), plus resume / remove. Live data is ignored by the pane until the replay has landed, so nothing prints twice. `src/main/pty/manager.ts`, `src/renderer/src/terminal/Terminal.tsx`
+
+**IPC + renderer state.** Main pushes every changed session over `sessions:update`; renderer keeps a map via `useSessions()`, sorted by last event. Verified live against 12 real sessions incl. this one showing `running / Bash / /pickup`. Files: `src/preload/index.ts`, `src/renderer/src/state/sessions.ts`.
+
+**Ship (worktree → origin/main).** One tab that replaces the five-command dance. `shipPlan()` fetches origin first, then reports every step as `run`/`skip`/`warn`/`block`: uncommitted work in the agent's worktree (committed with the message you type), new commits on `origin/<base>` (fast-forwarded), uncommitted files in the main checkout (stashed by explicit path and restored afterwards, never a bare `stash -u` — that would carry off the agent worktrees nested under it), and files that would collide, found with `merge-tree --write-tree` without touching either checkout. `ship()` runs the same steps and returns a log of what actually happened, plus the pushed sha, its GitHub commit URL and the deploy that builds it (a `heroku` remote names the app; a committed `Procfile` means an app wired to GitHub starts building on push). A failure stops the run, aborts a half-merge and puts the stash back. The steps stream to the renderer as `git:shipEvent` (start then end, with a duration), so the same list is the plan before you press and a filling-in timeline while it runs: rail between nodes, a breathing pulse on the step in flight, tick or cross and elapsed time behind it. Files: `src/main/git/index.ts` (`shipPlan`, `ship`, `hostChanges`, `deployTarget`), `src/renderer/src/git/ShipPane.tsx`, ship tab in `src/renderer/src/git/GitPane.tsx`.
+
+**Pull request button.** `pullRequestUrl()` builds the GitHub compare URL from the origin remote and the pushed upstream, so the branch a worktree pushed can be opened as a PR without the `gh` CLI (which is not installed on this machine). GitHub itself then answers whether it merges. `src/main/git/index.ts`, button in `GitPane.tsx`.
+
+**Packaging.** `electron-builder` 26, config in `electron-builder.yml`, `pnpm dist` (or `dist:dir`) into `release/`. Mac arm64 DMG + zip, ~97 MB each. `resources/browser-mcp` and `resources/hooks` ship as `extraResources` because both are read from `process.resourcesPath`; `node_modules/node-pty` is in `asarUnpack` because a native addon cannot load from inside an asar. Icon generated into `resources/icon.png` by a throwaway script (flat PNG written with zlib, no image dependency). Unsigned: `identity: null`, so it is ad-hoc signed and a colleague has to clear the quarantine flag once. The script name is `dist`, not `pack` — `pnpm pack` is pnpm's own command and shadows it.
+
+**Live usage.** The rate limits and context percentage in the top strip came from `cachedUsageUtilization` in `~/.claude.json`, which Claude Code refreshes rarely — it was 15 hours stale in practice, so the strip looked frozen. The live numbers exist only in the JSON payload Claude Code pipes to the status line (`rate_limits.five_hour`, `rate_limits.seven_day`, `context_window.used_percentage`, with `resets_at` in unix seconds). The installer now arranges for that payload to be saved to `~/.claude/agent-fleet/status/<sessionId>.json`: an existing status line gets a marked block appended after its `input=$(cat)` (prints nothing, backed up first), and a machine with no status line gets `resources/hooks/agent-fleet-status.sh` installed as one. `usage()` reads the newest payload for the account limits and every payload under 30 minutes old for its session's context, falling back to the cache, which is still the only source for the per-model weekly limits. `UsageSnapshot` gained `live` and `contexts`; the strip now shows the real context window size instead of assuming 1M, and polls every 8 s. Files: `src/main/usage/index.ts`, `src/main/hooks/installer.ts`, `resources/hooks/agent-fleet-status.sh`, `src/renderer/src/fleet/UsageStrip.tsx`.
+
+## Gotchas
+
+- **Tailwind 3 pinned, not 4.** `tailwindcss@4` drops the `tailwind.config.js` + postcss flow used here; pnpm nags about 4.x being available. Stay on 3 until deliberately migrated. `package.json`
+- **The tty→session bridge in `~/.claude/hooks/user-prompt-session-bridge.sh` does not work.** Hooks run without a tty, so `~/.claude/tty-sessions/` holds one file named `not a tty` and every topic falls back to the cwd key. Consequence: all sessions in one repo share a topic, and jump-to-iTerm cannot use that bridge. `src/main/sessions/topics.ts`
+- **A launched agent whose session got marked closed fell back to its placeholder card**, which was hard-coded to `running`, so it glowed green forever. Placeholders now only stand in until the transcript exists and only claim `running` for the first minute; sessions the app owns a pty for are never marked closed at all (`tailer.setOwned`). `src/renderer/src/App.tsx`, `src/main/sessions/tailer.ts`
+- **Without hooks there is no explicit "turn finished" signal**, so a terminal session reads as idle whenever no tool is open, including while it thinks. State now also looks at the last transcript item: a finished tool call or a fresh prompt means running for 25 s, trailing assistant text means running for 12 s and then idle. Installing the hooks replaces all of this with the real thing. `src/main/sessions/tailer.ts`
+- **An unparsed tool result keeps a call "open"**, which pinned a finished session as running for the whole 10-minute open-tool window. The window now collapses to 25 s once the session has written anything after that tool line. `src/main/sessions/tailer.ts`
+- **A subagent between two tool calls has no open tool** and used to read as idle, which hid it from the graph while it was plainly working. Subagents are now `running` whenever they wrote to their log in the last 60 s. `src/main/sessions/tailer.ts`
+- **`tool_use` without a later `tool_result` looks like "running" forever** until the 15 min stale cutoff; only the `Notification` hook can tell "waiting for approval" apart from "executing". `src/main/sessions/tailer.ts`
+- **Subagent lines are `isSidechain: true`** and appear only in the subagent file, never in the root transcript, so the root parser still drops them; the subagent parser must keep them (`applyLine` checks `s.parentId`). `src/main/sessions/parse.ts`
+- **A second app instance cannot bind the hook port** (`EADDRINUSE 47391`) and silently loses live state; it logs and carries on. Run one instance. `src/main/hooks/server.ts`
+- **A failed liveness scan must not read as "nothing is running"**: `pgrep` exiting non-zero, or `lsof` timing out, briefly wiped the map and un-hid every closed session and its repo. Exit code 1 (no match) is now the only empty answer accepted; any other failure keeps the previous map. `src/main/sessions/liveness.ts`
+- **Sessions from a client that does not run a process named `claude`** (desktop app, IDE extension) would be counted as zero-live in their directory and hidden once 90 s old. Not seen in practice on this machine, but the fix would be widening the `pgrep` match. `src/main/sessions/liveness.ts`
+- **A view that is not in a window never loads.** `WebContentsView` needs `contentView.addChildView` before `loadURL` resolves; without it navigation silently stays on `about:blank`. Views are attached on creation and parked at 1×1 instead of being detached when hidden. `src/main/browser/manager.ts`
+- **Two app instances silently fight over ports 47391/47392.** The second logs `EADDRINUSE` and carries on, and any MCP shim then talks to the *first* instance — which cost an hour of debugging a browser that was fine. `AGENT_FLEET_HOOK_PORT` / `AGENT_FLEET_BROWSER_PORT` override them for a second instance. `src/main/{hooks,browser}/server.ts`
+- **Agents reach for `claude-in-chrome` over the embedded pane** unless told otherwise; launches with a browser now carry an `--append-system-prompt` naming the `browser_*` tools. `src/main/agents/registry.ts`
+- **AppleScript cannot raise the window from a Claude Code Bash call** (`Ej auktoriserad att skicka Apple-händelser`), so screenshot verification of the app is unreliable from a session; ask Hannes to look instead.
+- **A page loaded in a `WebContentsView` logs Electron's own CSP warning into that view's console**, so `browser_read_console` shows it alongside the page's real output. Harmless, but do not read it as a page error. `src/main/browser/manager.ts`
+- **`screencapture` grabs whatever window is frontmost**, and the Electron window often is not, so screenshot-based checks from a script are unreliable while Hannes is working. Verify by log or by asking.
+- **`claude --resume <id>` on a session that never wrote a transcript prints `No conversation found`** and exits. Happens when an agent was quit while still on the trust dialog. `Agent.cwd === null` is the tell; resume then re-spawns as new with the same id. `src/main/agents/registry.ts`
+- **`claude --worktree` also fails in a repo with zero commits**: `Failed to resolve base branch "HEAD"`. `Repo.hasCommits` (git rev-parse HEAD) gates the toggle the same way trust does. `src/main/repos/registry.ts`
+- **`claude --worktree` refuses in a repo that has never been trusted**: "Workspace trust not yet accepted. Run `claude` once in this directory". Launching with worktree into a fresh folder exits 1 immediately. All of Hannes's existing repos are trusted; new folders need one plain launch first. `src/main/agents/registry.ts`
+- **Stat row wrapped to two lines** when cwd was long; fixed with `whitespace-nowrap` + `min-w-0 truncate` on the path, keep it that way. `src/renderer/src/workspace/Workspace.tsx`
+- **SIGTERM does not quit the app while agents run**: the `before-quit` dialog blocks with Cancel as default. Test scripts must `kill -9` and also `pkill -f 'claude --session-id'`, or the child keeps running. `src/main/index.ts`
+- **The hook shell guard blocks heredocs containing `/**` or `/regex/.exec`** (reads them as writes to `/`). Write TS files with the Write tool, not `cat <<EOF`.
+- **`app.getPath('userData')` differs between `pnpm dev` (`…/agent-fleet/`) and `electron out/main/index.js` (`…/Electron/`)** unless pinned; agents launched one way were invisible the other way. Pinned via `app.setPath('userData', …/agent-fleet)` at the top of main. `src/main/index.ts`
+- **macOS has no `timeout`.** Smoke-test the built app with `electron out/main/index.js & sleep 5; kill $!`, not `timeout`.
+
+- **`git status --porcelain` lines must not be trimmed before the path is cut out.** The two status letters are columns; trimming ` M b.txt` first turns `slice(3)` into `.txt`. Split on newlines and slice the raw line.
+- **`git rev-parse --abbrev-ref origin/HEAD` fails loudly but still prints `origin/HEAD` on stdout** when no default is set. The `git()` helper resolves whenever stdout is non-empty, so the stripped name came back as the literal `HEAD` and `baseOf` picked a branch that exists nowhere. Reject that value explicitly.
+- **A nested worktree shows up in the parent checkout as an untracked directory.** `git stash push -u` there would stash a live agent checkout. Ship filters worktree paths out and stashes explicit paths only.
+- **`shipPlan` has to fetch before it decides anything.** Judging "level with origin" or "no conflicts" against a stale remote ref is worse than not checking, because it reads as a green light.
+
+- **`~/.claude.json` is written constantly but its usage cache is not.** File mtime says nothing about how fresh `cachedUsageUtilization` is; read `fetchedAtMs`.
+- **`pnpm pack` is a built-in pnpm command** and silently runs instead of a script of that name.
+
+- **`SessionStart` is not work.** It fires on startup, resume, `/clear` and compaction, so mapping it to `running` painted every freshly opened or resumed agent green for 45 s and put a Working bar over its composer while Claude sat idle. The hook now makes no state claim for it.
+
+## Remaining
+
+Ordered by milestone. Done = M1 through M4 in daily use.
+
+**M1 — observer (adopted sessions)**
+
+- **Hook installer** — first run: show the exact entries, on confirm append to `~/.claude/settings.json` hooks arrays and copy the script to `~/.claude/hooks/`. Reversible from settings. Never touch existing entries.
+- **Sidebar tree** — repo → session rows: topic (from `~/.claude/topics/`), branch, last command, state dot, age. Click selects. `src/renderer/sidebar/`
+- **State strip** — top bar, one dot per live session, colour by state, click focuses. `src/renderer/strip/`
+- **Transcript pane** — rendered live transcript of the selected session, tool calls collapsed. Same component later reused for launched agents' detail. `src/renderer/transcript/`
+- **Jump to terminal** — best-effort focus of the iTerm window owning the session (tty match + AppleScript). Ship behind a flag if matching proves unreliable; see Open questions.
+
+**M2 — leftovers**
+
+- **Per-repo defaults editor** — `Repo.setupCommand`, `worktree`, `browser` are stored but only the toggles are reachable (from the launch dialog, per launch). Add a small per-repo settings popover; run `setupCommand` in the worktree after `claude -w` creates it (needs the worktree path, see M3). `src/renderer/src/launch/`
+- **"open folder" opens the repo, not the worktree** — worktree path is only known from the session's JSONL `cwd` once Claude writes it. Use `session.cwd` when the agent is linked.
+
+**M3 — diff pane**
+
+- **Monaco diff** — per selected session: `git diff` in `session.cwd` (worktree for launched agents, repo for adopted) against the branch base (`git merge-base HEAD main` when on a branch, else working tree vs HEAD); file list on the left, diff on the right, refreshed on `PostToolUse` for Edit/Write/Bash and on a 3 s poll. Main-process `git` calls only, renderer never touches the filesystem. `src/main/git/`, `src/renderer/src/diff/`
+
+**M4 — browser pane (built, see Built; leftovers here)**
+
+- **Screenshots need the pane on screen.** Chromium gives a parked view no compositor surface, so `Page.captureScreenshot`, `Emulation.setDeviceMetricsOverride` and `capturePage` all hang on it (tried far off-screen and a 1×1 park; both hang). `browser_screenshot` now refuses with an explanatory error unless that agent's pane is visible. Fixing it properly means an offscreen-rendering view or briefly swapping the visible pane. `src/main/browser/tools.ts`
+- **A flex item is sized from its content, not its container.** `BrowserPane`'s root lacked `w-full`, so the Chromium view filled only a fraction of the pane while the empty container stretched beside it. Any new pane placed in a row flex container needs `w-full` or `flex-1`. `src/renderer/src/browser/BrowserPane.tsx`
+- **New views need a start page.** Without one the view holds no document and paints nothing, which reads as a broken browser; `START_PAGE` is a data URL saying the pane is ready, and `state()` reports a data URL as an empty address bar. `src/main/browser/manager.ts`
+- **Approvals in chat are parsed out of the terminal's own output**, since Claude Code draws them and they never reach the transcript. `parsePrompt` strips ANSI and box-drawing borders, collects the numbered options and the highlighted one, and a click walks the highlight with arrow keys before pressing return. Best effort by design: an unrecognised shape falls back to a button that opens the terminal. `src/renderer/src/workspace/Approval.tsx`
+- **(superseded) Chat cannot answer a permission prompt.** Those are drawn by Claude Code's TUI, not represented in the transcript, so chat detects `waiting` and hands over to the terminal instead of trying. Anything else the TUI draws (resume picker, plan mode) needs the same treatment. `src/renderer/src/workspace/ChatView.tsx`
+- **Look at the pane once** — confirm the Chromium view lands exactly over its rectangle, follows the divider, and hides when switching to a session without a browser. Native views do not clip to CSS overflow, so a misreported rectangle shows as the page overlapping other panes. `src/renderer/src/browser/BrowserPane.tsx`
+- **Clicks are JS-dispatched, not real mouse events** — `browser_click` calls `el.click()` after a text/selector lookup. Sites that need real pointer events (canvas, drag) will not respond; move to `Input.dispatchMouseEvent` at element coordinates if that bites.
+- **Screenshots are not returned to the pane's scale** — `Page.captureScreenshot` uses the view size, so a narrow pane gives a narrow screenshot. Consider `Emulation.setDeviceMetricsOverride` for a stable 1280-wide capture.
+
+## Open questions
+
+- **Jump-to-iTerm matching**: the existing tty bridge is broken (see Gotchas). Alternatives: `lsof` on the JSONL file to find the `claude` pid → its tty → iTerm AppleScript. Try it, or drop the button? (current: untested)
+- **Claude in Chrome for launched agents**: they will still see the extension's tools when it is connected. Disable it per launch, or accept both browser surfaces? (current: extension is global)
+- **App name and bundle id**: `agent-fleet` is a working name. (current: none)
+- **Settings for launched agents**: run with `~/.claude/settings.json` as-is, or with app overrides for permission mode and model per launch? (current: as-is is the default assumption)
+
+## Decisions
+
+- **Design must be striking, not a stock dashboard** — Hannes's brief on pickup: "really cool and innovating". Every UI item in Remaining is judged against that; a plain sidebar-and-table build fails the brief even if functional. Direction revised 2026-09-08 (same day): Hannes pointed back at the **OMA Run Viewer screenshot** from the very first message. The constellation map is gone; the fleet screen is a card graph with uppercase mono labels, hairline grid, chips, stat cells and a right-hand detail panel, plus a waterfall tab. Keep every new surface in that language (`.lbl`, `.chip`, `.card`, `.field` in `styles.css`).
+- **Both adopted and launched sessions, observer first** — the observer is useful on day one with no workflow change; launched agents are where worktree, browser and diff isolation become possible. Launch-only would hide everything already open in iTerm.
+- **Electron + TypeScript, not Swift/Tauri** — the browser pane needs an embeddable Chromium the agent can drive over CDP. WKWebView has none. Still ships as a `.app`.
+- **electron-vite + React + Tailwind** — one developer iterating on state-heavy panes; dev-loop speed and familiarity (existing Next/shadcn repos) win over electron-forge's packaging.
+- **Closed sessions are hidden, not greyed** — Hannes counted 8 cards for 3 open terminals. Correctness of the live picture beats keeping history on the canvas; the transcripts are still on disk.
+- **Subagents are shown expanded by default** — first tried collapsed, since 97 of them over three days swamped the graph; once closed sessions were filtered out only live subagents remain, so Hannes asked for them open with the badge there to collapse.
+- **Exited agents stay on the map as dim nodes until removed** — a launch that dies in under a second must leave its error readable; hiding it made the app look broken (Hannes: "i think nothing happened").
+- **Worktree + own branch per launched agent, default on, opt-out per launch** — parallel agents on one repo is the core use case, and the diff pane is meaningless on a shared checkout.
+- **Use `claude --worktree`, not our own `git worktree add`** — Claude Code already creates and names the worktree and branch; the app reads the resulting path from the session's JSONL `cwd`. Drops a whole module and matches what `/pickup` in that session will see.
+- **`claude --session-id <uuid>` for correlation** — the app picks the id, so the JSONL file name is known before the process starts. Replaces the planned hook-cwd matching.
+- **Agents run through `$SHELL -lc`** — same PATH, same `claude` binary, same subscription login and statusline as iTerm. No SDK, no API key.
+- **No merge UI** — Hannes has a strict review-and-commit chain and agents never commit. App offers cleanup and open-in-VS-Code/terminal only.
+- **Embedded `WebContentsView` per agent + in-repo MCP shim** — only option with per-agent isolation and a live interactive pane on macOS. Claude in Chrome cannot isolate per agent; separate Chromium processes cannot be embedded on macOS.
+- **Minimal Playwright-style MCP tool set** — small enough to write in a few hundred lines; grows tool by tool if agents need more.
+- **Global hook install, once, confirmed, additive** — "waiting for approval" must work for terminal sessions or the observer is half-useful. Per-launch hooks alone would not cover them.
+- **Fleet screen ↔ agent screen, not sidebar + workspace** — revised with the OMA look. The graph needs the full width; the agent view needs the full width for terminal + browser. Two screens with a breadcrumb beat squeezing both into one. Hannes then asked to keep the fleet in view while in an agent, so the agent screen carries a compact session rail instead of the full graph.
+- **Adopted sessions show a read-only transcript** — same component as launched agents' detail view; writing into a foreign pty is fragile around permission prompts.
+- **Agents die with the app and are resumed automatically on the next start** — revised 2026-09-08 after Hannes found them "gone" on relaunch. Quit marks live agents `interrupted`; startup runs `claude --resume <id>` for each in its recorded cwd (worktree dir once known). A daemon still buys too little for its risk.
+- **Repo list from `~/.claude/projects/` plus per-repo defaults** — the list exists on disk already; setup command and browser toggle are per-repo facts, not per-launch choices.
+- **Tree/waterfall views (M5) planned separately** — a view over data M1–M4 produce; not needed to settle the architecture.

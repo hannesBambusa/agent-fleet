@@ -1,0 +1,49 @@
+appId: se.bambusa.agent-fleet
+productName: Agent Fleet
+copyright: Hannes Alm
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+
+# the MCP shim and the hook script are read from process.resourcesPath at runtime, so they must sit
+# outside the asar as plain files
+extraResources:
+  - from: resources/browser-mcp
+    to: browser-mcp
+  - from: resources/hooks
+    to: hooks
+
+# node-pty is a native addon: it cannot be loaded from inside an asar archive
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+
+mac:
+  icon: resources/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  # unsigned build: ad-hoc signature only, which is enough to run locally and on a colleague's Mac
+  # once they clear the quarantine flag
+  identity: null
+  darkModeSupport: true
+  extendInfo:
+    NSAppleEventsUsageDescription: Agent Fleet opens terminals and browsers for your agents.
+
+dmg:
+  title: Agent Fleet
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
