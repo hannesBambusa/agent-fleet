@@ -84,17 +84,25 @@ function bareSelect(tail: string[]): { options: string[]; cursor: number; at: nu
 export function ApprovalCard({
   agentId,
   onOpenTerminal,
-  quiet
+  quiet,
+  note
 }: {
   agentId: string
   onOpenTerminal: () => void
   /** say nothing when the terminal holds no question: silence is the normal case */
   quiet?: boolean
+  /**
+   * What the terminal is holding, for a caller that knows more than "waiting on something". It also
+   * stops the reading: a menu is not a question with answerable options, and half-parsing one into
+   * buttons here would be worse than sending the user to the terminal.
+   */
+  note?: string
 }): JSX.Element | null {
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const [sent, setSent] = useState(false)
 
   useEffect(() => {
+    if (note) return
     let alive = true
     const load = (): void => {
       void window.api.ptyHistory(agentId).then((h) => {
@@ -107,7 +115,7 @@ export function ApprovalCard({
       alive = false
       clearInterval(t)
     }
-  }, [agentId])
+  }, [agentId, note])
 
   function choose(index: number): void {
     if (!prompt) return
@@ -120,7 +128,7 @@ export function ApprovalCard({
     setTimeout(() => setSent(false), 2500)
   }
 
-  if (!prompt) {
+  if (!prompt || note) {
     if (quiet) return null
     return (
       <button
@@ -128,7 +136,7 @@ export function ApprovalCard({
         className="mb-4 flex w-full items-center gap-2 rounded-md border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-3 py-2.5 text-left text-[11.5px] text-[var(--warn)] hover:brightness-110"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-[var(--warn)] dot-blink" />
-        Claude is waiting on something the chat cannot draw.
+        {note ?? 'Claude is waiting on something the chat cannot draw.'}
         <span className="ml-auto underline">open terminal</span>
       </button>
     )
