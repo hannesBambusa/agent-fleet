@@ -8,6 +8,7 @@ import { PtyManager } from './pty/manager'
 import { AgentRegistry, belongsTo } from './agents/registry'
 import { execFile } from 'node:child_process'
 import { RepoRegistry } from './repos/registry'
+import { WindowState } from './window/state'
 import { BrowserManager, type Bounds } from './browser/manager'
 import { startBrowserServer } from './browser/server'
 import {
@@ -45,11 +46,11 @@ const ptys = new PtyManager()
 let agents: AgentRegistry
 let repos: RepoRegistry
 let browser: BrowserManager
+let windowState: WindowState
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1720,
-    height: 980,
+    ...windowState.options(),
     minWidth: 960,
     minHeight: 600,
     show: false,
@@ -62,7 +63,15 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  win.on('ready-to-show', () => win.show())
+  windowState.track(win)
+
+  win.on('ready-to-show', () => {
+    // maximize() shows the window as a side effect, so it has to wait for the first paint. Called
+    // any earlier it puts the empty frame that show:false exists to hide on screen for as long as
+    // the renderer takes to load. Called here it is still before show(), so there is no resize jump.
+    if (windowState.maximized()) win.maximize()
+    win.show()
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     void openExternal(url)
     return { action: 'deny' }
@@ -199,6 +208,8 @@ void app.whenReady().then(() => {
 
   agents = new AgentRegistry(ptys)
   repos = new RepoRegistry()
+  // after ready: options() asks the screen module, which has no answer before then
+  windowState = new WindowState()
   browser = new BrowserManager(() => BrowserWindow.getAllWindows()[0] ?? null)
   wireIpc()
 
