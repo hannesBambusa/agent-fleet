@@ -97,7 +97,7 @@ export function ApprovalCard({
   useEffect(() => {
     let alive = true
     const load = (): void => {
-      void window.api.ptyHistory(agentId).then((h) => {
+      void window.api.pty.history(agentId).then((h) => {
         if (alive) setPrompt(parsePrompt(h))
       })
     }
@@ -114,8 +114,8 @@ export function ApprovalCard({
     // the TUI moves a highlight, so walk it to the wanted row and press return
     const steps = index - prompt.cursor
     const key = steps > 0 ? '\x1b[B' : '\x1b[A'
-    for (let i = 0; i < Math.abs(steps); i++) window.api.ptyWrite(agentId, key)
-    setTimeout(() => window.api.ptyWrite(agentId, '\r'), 40)
+    for (let i = 0; i < Math.abs(steps); i++) window.api.pty.write(agentId, key)
+    setTimeout(() => window.api.pty.write(agentId, '\r'), 40)
     setSent(true)
     setTimeout(() => setSent(false), 2500)
   }

@@ -63,7 +63,19 @@ function describe(name: string, c: ServerConfig, scope: McpServer['scope'], orig
   }
 }
 
+// same reasoning as the catalog: read from several files, asked for by several panes, rarely changes
+const TTL_MS = 20 * 1000
+let cached: { at: number; key: string; list: McpServer[] } | null = null
+
 export function mcpServers(repoPaths: string[]): McpServer[] {
+  const key = repoPaths.join('\u0000')
+  if (cached && cached.key === key && Date.now() - cached.at < TTL_MS) return cached.list
+  const list = scan(repoPaths)
+  cached = { at: Date.now(), key, list }
+  return list
+}
+
+function scan(repoPaths: string[]): McpServer[] {
   const cfg = read<ClaudeJson>(CLAUDE_JSON) ?? {}
   const out: McpServer[] = []
 

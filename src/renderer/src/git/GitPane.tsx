@@ -74,7 +74,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      setStatus(await window.api.gitStatus(view))
+      setStatus(await window.api.git.status(view))
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -89,9 +89,9 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
   // the status they are drawn beside: fetched once, they went stale the moment the repo moved and the
   // buttons kept offering an action the plan no longer supported
   const reload = useCallback((): void => {
-    void window.api.gitMergePlan(cwd).then(setPlan).catch(() => setPlan(null))
-    void window.api.gitApplyPlan(cwd).then(setAplan).catch(() => setAplan(null))
-    void window.api.gitLog(cwd).then((l) => setHeadSubject(l[0]?.subject ?? null)).catch(() => setHeadSubject(null))
+    void window.api.git.mergePlan(cwd).then(setPlan).catch(() => setPlan(null))
+    void window.api.git.applyPlan(cwd).then(setAplan).catch(() => setAplan(null))
+    void window.api.git.log(cwd).then((l) => setHeadSubject(l[0]?.subject ?? null)).catch(() => setHeadSubject(null))
   }, [cwd])
 
   useEffect(() => {
@@ -102,7 +102,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setConfirmPublish(false)
     setPushMsg(null)
     // the pull-request url only changes when the branch or its upstream does, so it stays one-shot
-    void window.api.gitPrUrl(cwd).then(setPrUrl).catch(() => setPrUrl(null))
+    void window.api.git.prUrl(cwd).then(setPrUrl).catch(() => setPrUrl(null))
     reload()
     void refresh()
     const t = setInterval(() => void refresh(), POLL_MS)
@@ -123,7 +123,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     }
     const mine = ++seq.current
     void window.api
-      .gitDiff(view, sel.path, sel.staged, sel.untracked, sel.base)
+      .git.diff(view, sel.path, sel.staged, sel.untracked, sel.base)
       .then((d) => {
         if (mine === seq.current) setDiff(d)
       })
@@ -152,7 +152,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
 
   async function stage(paths: string[], on: boolean): Promise<void> {
     try {
-      await (on ? window.api.gitStage(view, paths) : window.api.gitUnstage(view, paths))
+      await (on ? window.api.git.stage(view, paths) : window.api.git.unstage(view, paths))
       await refresh()
     } catch (err) {
       setPushMsg({ text: err instanceof Error ? err.message : String(err), ok: false })
@@ -168,9 +168,9 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setMerging(true)
     setPushMsg(null)
     try {
-      setPushMsg({ text: await window.api.gitMerge(cwd), ok: true })
+      setPushMsg({ text: await window.api.git.merge(cwd), ok: true })
       await refresh()
-      setPlan(await window.api.gitMergePlan(cwd))
+      setPlan(await window.api.git.mergePlan(cwd))
     } catch (err) {
       setPushMsg({ text: err instanceof Error ? err.message : String(err), ok: false })
     } finally {
@@ -187,9 +187,9 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setApplying(true)
     setPushMsg(null)
     try {
-      setPushMsg({ text: await window.api.gitApply(cwd), ok: true })
+      setPushMsg({ text: await window.api.git.apply(cwd), ok: true })
       await refresh()
-      setAplan(await window.api.gitApplyPlan(cwd))
+      setAplan(await window.api.git.applyPlan(cwd))
     } catch (err) {
       setPushMsg({ text: err instanceof Error ? err.message : String(err), ok: false })
     } finally {
@@ -218,7 +218,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setCommitting(true)
     setPushMsg(null)
     try {
-      setPushMsg({ text: await window.api.gitCommitStaged(view, message), ok: true })
+      setPushMsg({ text: await window.api.git.commitStaged(view, message), ok: true })
       setMessage('')
       await refresh()
     } catch (err) {
@@ -233,7 +233,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setPushingBranch(true)
     setPushMsg(null)
     try {
-      setPushMsg({ text: await window.api.gitPushBranch(cwd, branchName.trim()), ok: true })
+      setPushMsg({ text: await window.api.git.pushBranch(cwd, branchName.trim()), ok: true })
       setBranchName(null)
       await refresh()
     } catch (err) {
@@ -252,9 +252,9 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setPublishing(true)
     setPushMsg(null)
     try {
-      setPushMsg({ text: await window.api.gitPublish(cwd), ok: true })
+      setPushMsg({ text: await window.api.git.publish(cwd), ok: true })
       await refresh()
-      setPlan(await window.api.gitMergePlan(cwd))
+      setPlan(await window.api.git.mergePlan(cwd))
     } catch (err) {
       setPushMsg({ text: err instanceof Error ? err.message : String(err), ok: false })
     } finally {
@@ -271,7 +271,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     setPushing(true)
     setPushMsg(null)
     try {
-      await window.api.gitPush(view)
+      await window.api.git.push(view)
       setPushMsg({ text: 'pushed', ok: true })
       await refresh()
     } catch (err) {
@@ -325,7 +325,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
         )}
         {prUrl && !!status?.upstream && (
           <button
-            onClick={() => void window.api.openExternal(prUrl)}
+            onClick={() => void window.api.shell.openExternal(prUrl)}
             title="open this branch's pull request page on GitHub, which also says whether it merges cleanly"
             className="chip shrink-0 hover:!text-[var(--accent)]"
           >
@@ -463,7 +463,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
             )}
           </div>
           <button
-            onClick={() => void window.api.gitMergePlan(cwd).then(setPlan)}
+            onClick={() => void window.api.git.mergePlan(cwd).then(setPlan)}
             className="lbl mt-2 rounded border border-[var(--line)] px-1.5 py-0.5 hover:!text-[var(--fg)]"
           >
             check again
@@ -596,7 +596,7 @@ function linkify(text: string): React.ReactNode {
     /^https?:\/\//.test(part) ? (
       <button
         key={i}
-        onClick={() => void window.api.openExternal(part)}
+        onClick={() => void window.api.shell.openExternal(part)}
         className="underline decoration-current/40 hover:decoration-current"
       >
         {part}

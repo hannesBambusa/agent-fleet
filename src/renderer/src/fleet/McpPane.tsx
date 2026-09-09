@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { McpServer, Session } from '../../../shared/types'
 import { age } from '../lib/format'
+import { openFile } from '../state/openFile'
 
 const SCOPE_TONE: Record<McpServer['scope'], string> = {
   user: 'var(--accent)',
@@ -54,7 +55,7 @@ export function McpPane({ sessions, now }: { sessions: Session[]; now: number })
   const [list, setList] = useState<McpServer[] | null>(null)
   useEffect(() => {
     void window.api
-      .mcpServers()
+      .catalog.mcpServers()
       .then(setList)
       .catch(() => setList([]))
   }, [])
@@ -153,7 +154,7 @@ export function McpPane({ sessions, now }: { sessions: Session[]; now: number })
                     )}
                     {s.path && (
                       <button
-                        onClick={() => void window.api.openPath(s.path!)}
+                        onClick={() => openFile(s.path!)}
                         className="chip mt-1.5 hover:!text-[var(--accent)]"
                       >
                         open config

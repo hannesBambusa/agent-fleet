@@ -44,9 +44,14 @@ function frontmatter(text: string): Record<string, string> {
   return out
 }
 
+// Only the frontmatter and the first paragraph are ever shown, and this scanner reads files from
+// plugin caches and project folders, which are the least trusted input it touches. Slicing after the
+// read would still decode the whole thing into memory first, so the size is checked before opening.
+const MAX_READ = 256 * 1024
+
 function read(path: string): string {
   try {
-    // only the frontmatter and the first paragraph are ever shown
+    if (statSync(path).size > MAX_READ) return ''
     return readFileSync(path, 'utf8').slice(0, 4000)
   } catch {
     return ''
@@ -146,7 +151,24 @@ function repoRoot(path: string): string {
   return path
 }
 
+/**
+ * The whole scan is synchronous and walks three trees, and three places in the UI ask for it: the
+ * catalog tabs, the MCP tab and the slash menu, the last of which remounts per agent. Skills and
+ * commands change when a person edits a file, which is rare and never mid-keystroke, so a short
+ * window of staleness costs nothing and saves the walk.
+ */
+const TTL_MS = 20 * 1000
+let cached: { at: number; key: string; items: CatalogItem[] } | null = null
+
 export function catalog(repoPaths: string[]): CatalogItem[] {
+  const key = repoPaths.join('\u0000')
+  if (cached && cached.key === key && Date.now() - cached.at < TTL_MS) return cached.items
+  const items = scan(repoPaths)
+  cached = { at: Date.now(), key, items }
+  return items
+}
+
+function scan(repoPaths: string[]): CatalogItem[] {
   const out = [...allIn(CLAUDE, 'user', 'global')]
   for (const p of pluginRoots()) out.push(...allIn(p.root, 'plugin', p.name))
   // several worktrees of one repository would otherwise list its skills once each

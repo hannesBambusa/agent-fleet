@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CatalogItem, CatalogKind } from '../../../shared/types'
 import { normalise, toggleQuick, useQuick } from '../state/quickCommands'
+import { openFile } from '../state/openFile'
 
 const SOURCE_TONE: Record<CatalogItem['source'], { label: string; color: string }> = {
   user: { label: 'global', color: 'var(--accent)' },
@@ -23,7 +24,7 @@ export function Catalog({ kind }: { kind: CatalogKind }): JSX.Element {
 
   useEffect(() => {
     void window.api
-      .catalog()
+      .catalog.items()
       .then(setAll)
       .catch(() => setAll([]))
   }, [])
@@ -156,7 +157,11 @@ function Card({
                 {pinned ? 'remove quick button' : 'add as quick button'}
               </button>
             )}
-            <button onClick={() => void window.api.openPath(item.path)} className="chip hover:!text-[var(--accent)]">
+            <button
+              onClick={() => openFile(item.path)}
+              title="read it in the app, or in your editor when no file browser is open"
+              className="chip hover:!text-[var(--accent)]"
+            >
               open file
             </button>
           </div>

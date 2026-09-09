@@ -35,6 +35,7 @@ import { usage } from './usage'
 import { catalog } from './catalog'
 import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
+import { listDir, readTextFile } from './files/browse'
 import { seedApply, seedPlan } from './git/seed'
 import type { Agent, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
 
@@ -165,6 +166,9 @@ function wireIpc(): void {
   ipcMain.handle('files:saveImage', (_, bytes: Uint8Array, mime: string) => saveImage(bytes, mime))
   ipcMain.handle('files:pickImage', () => pickImage())
   ipcMain.handle('files:thumb', (_, path: string) => thumbnail(path))
+  // the roots come from the app's own registry, never from the caller
+  ipcMain.handle('files:list', (_, path: string) => listDir(repos.list().map((r) => r.path), path))
+  ipcMain.handle('files:read', (_, path: string) => readTextFile(repos.list().map((r) => r.path), path))
   // the pane's own pixels, saved where an agent can read them back
   ipcMain.handle('browser:shot', async (_, agentId: string) => {
     if (!browser.isVisible(agentId)) {

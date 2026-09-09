@@ -18,7 +18,7 @@ export function openLink(href: string, agentId: string | null): void {
     window.dispatchEvent(new CustomEvent(EVENT, { detail: { agentId, url: href } }))
     return
   }
-  void window.api.openExternal(href)
+  void window.api.shell.openExternal(href)
 }
 
 export function onOpenLink(cb: (agentId: string, url: string) => void): () => void {

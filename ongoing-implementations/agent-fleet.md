@@ -148,6 +148,9 @@ Planned 2026-09-08 from an interview with Hannes. Scaffold built the same day. P
 
 - **`git()` only rejects when stderr is non-empty**, so any command that fails silently reads as a success. `show-ref --verify --quiet` is exactly that: nothing on either channel when the ref is missing, which made `baseOf` accept `master` in a repo that has no `master` and threw `ambiguous argument 'master..HEAD'` out of `git:mergePlan` on every poll. Existence checks must ask for a value (`rev-parse --verify --quiet`) and judge on the output, not on rejection.
 
+- **`catalog/index.ts` and `catalog/mcp.ts` are the coupling surface to Claude Code's own file formats** — frontmatter shape, plugin cache layout, the keys inside `~/.claude.json`. A Claude Code release can change any of them, and the failure is silent: the tab goes empty rather than erroring. Look here first when it does.
+- **The chat's send path waits a fixed 80 ms or 220 ms before the return.** It is a measured guess at when Claude Code's slash menu settles, not a signal, and it has already caused one real bug (`/commit skip` sent twice). Revisit if the CLI ever exposes that state.
+
 ## Remaining
 
 Ordered by milestone. Done = M1 through M4 in daily use.

@@ -34,7 +34,7 @@ async function bundle(entry, name) {
 }
 
 const { applyLine } = await bundle('src/main/sessions/parse.ts', 'parse.cjs')
-const { toTurns } = await bundle('src/renderer/src/workspace/ChatView.tsx', 'chatview.cjs')
+const { toTurns } = await bundle('src/renderer/src/workspace/turns.ts', 'turns.cjs')
 
 const BASH = 'toolu_vrtx_019jBzMfXK97z44ZGhGLjb9Z'
 const READ = 'toolu_vrtx_01GD6qF6Pbe7mui8aytpH7Mz'

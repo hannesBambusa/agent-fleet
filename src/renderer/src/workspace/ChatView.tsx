@@ -9,6 +9,10 @@ import { Divider } from '../lib/Divider'
 import { useQuick } from '../state/quickCommands'
 import { toggleToolRows, useToolRows } from '../state/toolRows'
 import { SlashMenu, useCatalogItems } from './SlashMenu'
+import { Bubble } from './Bubble'
+import { CommandRail } from './CommandRail'
+import { Working } from './Working'
+import { toTurns, verbFor } from './turns'
 import { filterSlash, slashQuery } from './slash'
 import { annotate, collapse, lineDiff, summarise } from '../lib/lineDiff'
 import { highlight, langOf, type Token } from '../lib/highlight'
@@ -24,66 +28,6 @@ function readRail(): number {
   } catch {
     return 190
   }
-}
-
-interface Turn {
-  id: string
-  role: 'you' | 'claude'
-  ts: string
-  text: string
-  command?: boolean
-  tools: Array<{ id: string; tool: string; text: string; result?: TranscriptItem; edit?: TranscriptEdit }>
-}
-
-// one word per turn, picked from the turn's own start time so it holds still while the turn runs
-const VERBS = [
-  'Baking', 'Germinating', 'Percolating', 'Simmering', 'Noodling', 'Cogitating', 'Whirring', 'Pondering',
-  'Brewing', 'Tinkering', 'Rummaging', 'Puttering', 'Chewing', 'Untangling', 'Kneading', 'Distilling',
-  'Marinating', 'Spelunking', 'Shuffling', 'Conjuring', 'Sifting', 'Plotting', 'Wrangling', 'Composing',
-  'Ruminating', 'Assembling', 'Polishing', 'Foraging', 'Weaving', 'Calibrating'
-]
-
-function verbFor(seed: number): string {
-  return VERBS[Math.abs(Math.floor(seed / 1000)) % VERBS.length]
-}
-
-/** the transcript is a flat log; a chat needs it grouped into turns with tools folded in */
-export function toTurns(items: TranscriptItem[]): Turn[] {
-  const out: Turn[] = []
-  // every tool call so far, by its tool_use id. Results for a batch of calls all arrive in one user
-  // message and can answer a call from an earlier turn, so the lookup has to outlive `cur`.
-  const byToolUseId = new Map<string, Turn['tools'][number]>()
-  let cur: Turn | null = null
-  for (const it of items) {
-    if (it.kind === 'prompt' || it.kind === 'command') {
-      cur = null
-      out.push({ id: it.id, role: 'you', ts: it.ts, text: it.text, command: it.kind === 'command', tools: [] })
-      continue
-    }
-    if (it.kind === 'text') {
-      cur = { id: it.id, role: 'claude', ts: it.ts, text: it.text, tools: [] }
-      out.push(cur)
-      continue
-    }
-    if (it.kind === 'tool') {
-      if (!cur || cur.role !== 'claude') {
-        cur = { id: it.id, role: 'claude', ts: it.ts, text: '', tools: [] }
-        out.push(cur)
-      }
-      const call = { id: it.id, tool: it.tool ?? 'tool', text: it.text, edit: it.edit }
-      cur.tools.push(call)
-      if (it.toolUseId) byToolUseId.set(it.toolUseId, call)
-      continue
-    }
-    if (it.kind === 'result') {
-      // an item parsed before toolUseId existed carries no id, so it keeps the old last-tool pairing
-      const call = it.toolUseId ? byToolUseId.get(it.toolUseId) : cur?.tools[cur.tools.length - 1]
-      // a result whose call has already fallen out of the transcript ring has nowhere to go, and
-      // hanging it on an unrelated call would show the wrong output under it
-      if (call && !call.result) call.result = it
-    }
-  }
-  return out
 }
 
 export function ChatView({
@@ -139,7 +83,7 @@ export function ChatView({
       setDeathNote(null)
       return
     }
-    void window.api.ptyHistory(agent.id).then((h) => {
+    void window.api.pty.history(agent.id).then((h) => {
       const lines = h
         .replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '')
         .split(/\r?\n/)
@@ -180,7 +124,7 @@ export function ChatView({
   // Esc is what Claude Code listens for; the terminal tab does this when you press it there
   function interrupt(): void {
     if (!agent) return
-    window.api.ptyWrite(agent.id, '\x1b')
+    window.api.pty.write(agent.id, '\x1b')
   }
 
   /**
@@ -221,7 +165,7 @@ export function ChatView({
 
   function mention(path: string): void {
     setDraft((d) => (d ? `${d.replace(/\s*$/, '')} ${path} ` : `${path} `))
-    void window.api.imageThumb(path).then((thumb) => setShots((prev) => [...prev, { path, thumb }]))
+    void window.api.files.imageThumb(path).then((thumb) => setShots((prev) => [...prev, { path, thumb }]))
   }
 
   function unmention(path: string): void {
@@ -240,7 +184,7 @@ export function ChatView({
     setAttaching(true)
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      mention(await window.api.saveImage(bytes, file.type || 'image/png'))
+      mention(await window.api.files.saveImage(bytes, file.type || 'image/png'))
     } finally {
       setAttaching(false)
     }
@@ -251,7 +195,7 @@ export function ChatView({
     if (!agent) return
     setAttaching(true)
     try {
-      const shot = await window.api.browserShot(agent.id)
+      const shot = await window.api.browser.shot(agent.id)
       mention(shot)
     } catch (err) {
       setDraft((d) => d + (d ? ' ' : '') + `(could not capture the browser: ${err instanceof Error ? err.message : String(err)})`)
@@ -270,9 +214,13 @@ export function ChatView({
     // arrives before the menu has settled picks the highlighted entry instead of sending the line —
     // which is how "/commit skip" went in as "/commit" and then again in full. Plain text for a
     // single line, bracketed paste only when newlines have to survive, and enough delay either way.
+    //
+    // The delay is a measured guess, not a signal: nothing the pty emits says "the menu has
+    // settled", so a machine slow enough could still race. If Claude Code ever exposes that state,
+    // through a hook or an escape sequence, wait on it instead of a number.
     const multiline = text.includes('\n')
-    window.api.ptyWrite(agent.id, multiline ? `\x1b[200~${text}\x1b[201~` : text)
-    setTimeout(() => window.api.ptyWrite(agent.id, '\r'), multiline ? 80 : 220)
+    window.api.pty.write(agent.id, multiline ? `\x1b[200~${text}\x1b[201~` : text)
+    setTimeout(() => window.api.pty.write(agent.id, '\r'), multiline ? 80 : 220)
     if (!override) setDraft('')
     setStick(true)
   }
@@ -289,7 +237,7 @@ export function ChatView({
         className="select min-h-0 flex-1 overflow-auto px-5 py-4"
       >
         {turns.map((t) => (
-          <Bubble key={t.id} t={t} agentId={agent?.id ?? null} openTools={openTools} />
+          <Bubble key={t.id} t={t} agentId={agent?.id ?? null} cwd={s.cwd} openTools={openTools} />
         ))}
         {!turns.length && !busy && !starting && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--dim)]">
@@ -302,6 +250,7 @@ export function ChatView({
             key={p.id}
             t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }}
             agentId={agent?.id ?? null}
+            cwd={s.cwd}
             openTools={openTools}
           />
         ))}
@@ -441,7 +390,7 @@ export function ChatView({
             <div className="flex items-center gap-3 px-3 pb-2">
               <span className="lbl">↩ send · ⇧↩ newline</span>
               <button
-                onClick={() => void window.api.pickImage().then((p) => p && mention(p))}
+                onClick={() => void window.api.files.pickImage().then((p) => p && mention(p))}
                 disabled={attaching}
                 title="attach an image; paste or drop one here too"
                 className="lbl hover:!text-[var(--accent)] disabled:opacity-40"
@@ -513,13 +462,13 @@ export function ChatView({
                   <button
                     onClick={() => {
                       const { cols, rows } = termSize()
-                      void window.api.resumeAgent(agent.id, cols, rows)
+                      void window.api.agents.resumeAgent(agent.id, cols, rows)
                     }}
                     className="chip chip-running hover:brightness-110"
                   >
                     {agent.cwd ? 'resume' : 'start again'}
                   </button>
-                  <button onClick={() => void window.api.removeAgent(agent.id)} className="chip hover:!text-[var(--danger)]">
+                  <button onClick={() => void window.api.agents.removeAgent(agent.id)} className="chip hover:!text-[var(--danger)]">
                     remove
                   </button>
                 </span>
@@ -559,313 +508,3 @@ export function ChatView({
  * together. The gap printed under each entry is the time since the one before it, which is what turns
  * a list of names into the shape of a review loop: a long gap is work, a short one is a retry.
  */
-function CommandRail({ list, now, width }: { list: SessionCommand[]; now: number; width: number }): JSX.Element {
-  const box = useRef<HTMLDivElement>(null)
-  // follow the newest, the way the chat does
-  useEffect(() => {
-    box.current?.scrollTo({ top: box.current.scrollHeight })
-  }, [list.length])
-
-  return (
-    <aside
-      style={{ width }}
-      className="flex shrink-0 flex-col border-l border-[var(--line)] bg-[var(--panel)]"
-    >
-      <div className="lbl flex shrink-0 items-baseline justify-between border-b border-[var(--line)] px-3 py-2">
-        <span>commands</span>
-        <span className="mono text-[10px] text-[var(--dim)]">{list.length}</span>
-      </div>
-      <div ref={box} className="min-h-0 flex-1 overflow-auto px-3 py-2">
-        {list.map((c, i) => {
-          const prev = list[i - 1]
-          const gap = prev ? Date.parse(c.at) - Date.parse(prev.at) : 0
-          const last = i === list.length - 1
-          return (
-            <div key={`${c.at}-${i}`} className="relative pb-2.5 pl-4">
-              {/* the rail runs between the dots, not past the last one */}
-              {!last && <span className="absolute left-[3px] top-[10px] h-full w-px bg-[var(--line)]" aria-hidden />}
-              <span
-                className="absolute left-0 top-[5px] h-[7px] w-[7px] rounded-full"
-                style={{ background: last ? 'var(--accent)' : 'var(--dim)' }}
-                aria-hidden
-              />
-              <div className="flex items-baseline gap-1.5">
-                <span
-                  className={`mono min-w-0 flex-1 truncate text-[11px] ${last ? 'text-[var(--accent)]' : ''}`}
-                  title={`${c.name} · ${new Date(c.at).toLocaleString()}`}
-                >
-                  {c.name}
-                </span>
-                <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{clock(c.at)}</span>
-              </div>
-              {gap > 1000 && <div className="mono text-[9px] text-[var(--dim)]">+{dur(gap)}</div>}
-              {last && <div className="mono text-[9px] text-[var(--dim)]">{age(c.at, now)} ago</div>}
-            </div>
-          )
-        })}
-      </div>
-    </aside>
-  )
-}
-
-function Working({
-  tool,
-  elapsed,
-  produced,
-  verb,
-  waiting,
-  sub,
-  onInterrupt
-}: {
-  tool: string | null
-  elapsed: number
-  produced: number
-  verb: string
-  waiting: boolean
-  sub: boolean
-  onInterrupt?: () => void
-}): JSX.Element {
-  const color = waiting ? 'var(--warn)' : sub ? 'var(--sub)' : 'var(--accent)'
-  const shown = useCountUp(produced)
-  return (
-    <div>
-      <div className="flex items-center gap-2 text-[11.5px]" style={{ color }}>
-      <span className={waiting ? 'dot-blink' : 'node-breathe'} style={{ fontSize: 13 }}>
-        ✶
-      </span>
-      <span>{waiting ? 'Waiting for your approval' : `${verb}…`}</span>
-      <span className="mono text-[10px] text-[var(--dim)]">
-        ({dur(elapsed)}
-        {shown > 0 ? ` · ↓ ${fmtTokens(shown)} tokens` : ''})
-      </span>
-      {tool && !waiting && <span className="mono text-[10px] text-[var(--muted)]">{tool}</span>}
-        {!waiting && (
-          <span className="flex gap-[3px]">
-            <Dot delay={0} />
-            <Dot delay={0.18} />
-            <Dot delay={0.36} />
-          </span>
-        )}
-        {onInterrupt && (
-          <button
-            onClick={onInterrupt}
-            title="interrupt this turn (esc)"
-            className="mono ml-auto rounded border border-[var(--line)] px-2 py-0.5 text-[10px] text-[var(--muted)] hover:border-[var(--danger)]/50 hover:text-[var(--danger)]"
-          >
-            interrupt · esc
-          </button>
-        )}
-      </div>
-      <div
-        className={`work-track mt-2 h-[3px] w-full rounded-full ${
-          waiting ? 'work-track-wait' : sub ? 'work-track-sub' : ''
-        }`}
-      />
-    </div>
-  )
-}
-
-function Dot({ delay }: { delay: number }): JSX.Element {
-  return (
-    <span
-      className="node-breathe inline-block h-[3px] w-[3px] rounded-full bg-current"
-      style={{ animationDelay: `${delay}s`, animationDuration: '1.2s' }}
-    />
-  )
-}
-
-function Bubble({ t, agentId, openTools }: { t: Turn; agentId: string | null; openTools: boolean }): JSX.Element {
-  if (t.role === 'you') {
-    return (
-      <div className="mb-4 flex justify-end">
-        <div className="max-w-[85%] rounded-lg rounded-br-sm bg-[var(--accent-soft)] px-3.5 py-2.5">
-          <div className="mono mb-1 text-[9px] uppercase tracking-widest text-[var(--accent)]">you · {clock(t.ts)}</div>
-          {t.command ? (
-            <div className="mono text-[12px] text-[var(--fg)]">{t.text}</div>
-          ) : (
-            <div className="select text-[12.5px] leading-relaxed">
-              <Markdown text={t.text} agentId={agentId} />
-            </div>
-          )}
-        </div>
-      </div>
-    )
-  }
-  return (
-    <div className="mb-4 max-w-[92%]">
-      <div className="mono mb-1 text-[9px] uppercase tracking-widest text-[var(--dim)]">claude · {clock(t.ts)}</div>
-      {t.text && (
-        <div className="select text-[12.5px] leading-relaxed text-[var(--fg)]/90">
-          <Markdown text={t.text} agentId={agentId} />
-        </div>
-      )}
-      {t.tools.map((tool) => (
-        <ToolLine key={tool.id} tool={tool} startOpen={openTools} />
-      ))}
-    </div>
-  )
-}
-
-/**
- * What kind of thing a tool call is, for the eye rather than the parser.
- *
- * A turn is a column of near-identical grey rows, and the three that matter read differently: a
- * command that ran, a file that changed, a page the agent touched. Each gets an edge colour and a
- * glyph, and nothing else moves, so the rows still scan as one list.
- */
-function kindOf(tool: string): { tone: string; glyph: string; label: string } {
-  if (tool.startsWith('mcp__')) {
-    // mcp__browser__browser_click reads as "browser · click"
-    const [, server = 'mcp', ...rest] = tool.split('__')
-    const action = rest.join('__').replace(new RegExp(`^${server}_`), '')
-    return { tone: 'var(--sub)', glyph: '◈', label: `${server} · ${action}` }
-  }
-  if (tool === 'Bash' || tool === 'BashOutput' || tool === 'KillShell') {
-    // a block cursor: a terminal without borrowing `$`, which reads as a shell variable next to code
-    return { tone: 'var(--warn)', glyph: '▮', label: tool }
-  }
-  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') {
-    return { tone: 'var(--accent)', glyph: '✎', label: tool }
-  }
-  if (tool === 'Read' || tool === 'Grep' || tool === 'Glob' || tool === 'WebFetch' || tool === 'WebSearch') {
-    return { tone: 'var(--code-fn)', glyph: '◇', label: tool }
-  }
-  if (tool === 'Task' || tool === 'Agent') return { tone: 'var(--sub)', glyph: '⌥', label: tool }
-  return { tone: 'var(--muted)', glyph: '·', label: tool }
-}
-
-function ToolLine({
-  tool,
-  startOpen
-}: {
-  tool: { tool: string; text: string; result?: TranscriptItem; edit?: TranscriptEdit }
-  startOpen: boolean
-}): JSX.Element {
-  const [open, setOpen] = useState(startOpen)
-  // flipping the default re-opens or closes every row, including ones already touched by hand
-  useEffect(() => {
-    setOpen(startOpen)
-  }, [startOpen])
-  const err = tool.result?.isError
-  const kind = kindOf(tool.tool)
-  // a file edit is what actually happened; its output is usually just "ok"
-  const rows = useMemo(
-    () => (tool.edit ? annotate(collapse(lineDiff(tool.edit.before, tool.edit.after)), tool.edit.line) : null),
-    [tool.edit]
-  )
-  const lang = tool.edit ? langOf(tool.edit.path) : ''
-  return (
-    <div className="mt-1.5">
-      <button
-        onClick={() => setOpen(!open)}
-        style={{ borderLeft: `2px solid ${err ? 'var(--danger)' : kind.tone}` }}
-        className="mono flex w-full items-baseline gap-2 rounded border border-[var(--line)] bg-[var(--panel)] py-1 pl-1.5 pr-2 text-left text-[10.5px] hover:border-[var(--muted)]"
-      >
-        <span className="shrink-0" style={{ color: err ? 'var(--danger)' : kind.tone }}>
-          {open ? '▾' : '▸'} <span className="opacity-80">{kind.glyph}</span> {kind.label}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[var(--muted)]" title={tool.text}>
-          {tool.text}
-        </span>
-        {rows && !open && (
-          <span className="mono shrink-0 text-[9.5px]">
-            <span style={{ color: 'var(--diff-add-ink)' }}>+{rows.filter((r) => r.kind === 'add').length}</span>{' '}
-            <span style={{ color: 'var(--diff-del-ink)' }}>-{rows.filter((r) => r.kind === 'del').length}</span>
-          </span>
-        )}
-        {!tool.result && <span className="shrink-0 text-[var(--accent)]">running</span>}
-      </button>
-      {open && rows && (
-        <div className="select mt-1 overflow-hidden rounded border border-[var(--line)] bg-[var(--panel)]">
-          {/* the same header Claude Code prints: what it did, to which file, in how many lines */}
-          <div className="flex items-baseline gap-2 border-b border-[var(--line)] px-2 py-1">
-            <span className="mono text-[10.5px] text-[var(--fg)]">
-              {tool.tool === 'Write' ? 'Write' : 'Update'}({tool.edit?.path.split('/').slice(-2).join('/')})
-            </span>
-            <span className="mono text-[10px] text-[var(--dim)]">{summarise(rows)}</span>
-          </div>
-          <div className="max-h-[340px] overflow-auto py-1 text-[10px] leading-[1.55]">
-            {rows.map((r, i) => (
-              <div
-                key={i}
-                className="mono flex whitespace-pre-wrap break-words px-1"
-                style={
-                  r.kind === 'add'
-                    ? { background: 'var(--diff-add-bg)' }
-                    : r.kind === 'del'
-                      ? { background: 'var(--diff-del-bg)' }
-                      : undefined
-                }
-              >
-                <span className="w-8 shrink-0 select-none pr-1 text-right text-[var(--dim)] opacity-70">{r.n ?? ''}</span>
-                <span
-                  className="w-3 shrink-0 select-none"
-                  style={{
-                    color: r.kind === 'add' ? 'var(--diff-add-ink)' : r.kind === 'del' ? 'var(--diff-del-ink)' : 'transparent'
-                  }}
-                >
-                  {r.kind === 'add' ? '+' : r.kind === 'del' ? '-' : ' '}
-                </span>
-                {/* the diff says which lines moved, the syntax colours say what the code is; the two
-                    are drawn separately so a changed line still reads as code */}
-                <span className="min-w-0 flex-1">
-                  {r.parts
-                    ? r.parts.map((p, k) => (
-                        <span
-                          key={k}
-                          style={
-                            p.changed
-                              ? {
-                                  background: r.kind === 'add' ? 'var(--diff-add-word)' : 'var(--diff-del-word)',
-                                  borderRadius: '2px'
-                                }
-                              : undefined
-                          }
-                        >
-                          <Code text={p.text} lang={lang} />
-                        </span>
-                      ))
-                    : r.text
-                      ? <Code text={r.text} lang={lang} />
-                      : ' '}
-                </span>
-              </div>
-            ))}
-            {!!tool.edit?.more && (
-              <div className="lbl px-2 pt-1">and {tool.edit.more} more edit(s) in the same call</div>
-            )}
-          </div>
-        </div>
-      )}
-      {open && !rows && tool.result && (
-        <pre className="select mt-1 max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded border border-[var(--line)] bg-[var(--panel)] px-2 py-1.5 text-[10px] leading-snug text-[var(--muted)]">
-          {tool.result.text || '(no output)'}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-const TOKEN_COLOR: Record<Token['kind'], string | undefined> = {
-  comment: 'var(--code-comment)',
-  string: 'var(--code-string)',
-  number: 'var(--code-number)',
-  keyword: 'var(--code-keyword)',
-  fn: 'var(--code-fn)',
-  punct: 'var(--code-punct)',
-  // an identifier keeps the pane's own text colour, which is what makes the rest read as colour
-  plain: 'var(--fg)'
-}
-
-/** One line of code, coloured. Memoised: a long diff would otherwise re-tokenise on every tick. */
-const Code = memo(function Code({ text, lang }: { text: string; lang: string }): JSX.Element {
-  return (
-    <>
-      {highlight(text, lang).map((t, i) => (
-        <span key={i} style={{ color: TOKEN_COLOR[t.kind] }}>
-          {t.text}
-        </span>
-      ))}
-    </>
-  )
-})

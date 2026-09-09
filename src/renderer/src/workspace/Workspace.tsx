@@ -212,7 +212,7 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
             title="drag to resize the panel"
           />
           <div className="flex min-w-0 shrink-0" style={{ width: Math.min(browserWidth, Math.max(BROWSER_MIN, width - AGENT_MIN)) }}>
-            <RightPanel s={s} agent={agent} />
+            <RightPanel s={s} agent={agent} width={Math.min(browserWidth, Math.max(BROWSER_MIN, width - AGENT_MIN))} />
           </div>
         </>
       )}
@@ -233,12 +233,12 @@ function ExitedPanel({ agent }: { agent: Agent }): JSX.Element {
           className="rounded bg-[var(--accent)] px-2.5 py-1 font-medium text-[var(--ink)]"
           onClick={() => {
             const { cols, rows } = termSize()
-            void window.api.resumeAgent(agent.id, cols, rows)
+            void window.api.agents.resumeAgent(agent.id, cols, rows)
           }}
         >
           {agent.cwd ? 'resume' : 'start'}
         </button>
-        <button className="rounded px-2 py-1 text-[var(--muted)] hover:text-[var(--fg)]" onClick={() => void window.api.removeAgent(agent.id)}>
+        <button className="rounded px-2 py-1 text-[var(--muted)] hover:text-[var(--fg)]" onClick={() => void window.api.agents.removeAgent(agent.id)}>
           remove
         </button>
       </div>
@@ -293,21 +293,21 @@ function AgentControls({ agent }: { agent: Agent }): JSX.Element {
             className={`${btn} !border-[var(--accent)]/40 !text-[var(--accent)]`}
             onClick={() => {
               const { cols, rows } = termSize()
-              void window.api.resumeAgent(agent.id, cols, rows)
+              void window.api.agents.resumeAgent(agent.id, cols, rows)
             }}
           >
             {agent.cwd ? 'resume' : 'start'}
           </button>
-          <button className={`${btn} hover:!text-[var(--danger)]`} onClick={() => void window.api.removeAgent(agent.id)}>
+          <button className={`${btn} hover:!text-[var(--danger)]`} onClick={() => void window.api.agents.removeAgent(agent.id)}>
             remove
           </button>
         </>
       ) : (
-        <button className={`${btn} hover:!text-[var(--danger)]`} onClick={() => void window.api.stopAgent(agent.id)}>
+        <button className={`${btn} hover:!text-[var(--danger)]`} onClick={() => void window.api.agents.stopAgent(agent.id)}>
           stop
         </button>
       )}
-      <button className={btn} title={agent.repoPath} onClick={() => void window.api.openPath(agent.cwd ?? agent.repoPath)}>
+      <button className={btn} title={agent.repoPath} onClick={() => void window.api.shell.openPath(agent.cwd ?? agent.repoPath)}>
         folder
       </button>
     </span>

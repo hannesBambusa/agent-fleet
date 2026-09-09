@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-
-const KEY = 'agent-fleet.toolRowsOpen'
-const EVENT = 'agent-fleet:tool-rows'
+import { createBroadcastState } from './store'
+import { useBroadcast } from './persist'
 
 /**
  * Whether a tool call in the chat starts open.
@@ -10,34 +8,16 @@ const EVENT = 'agent-fleet:tool-rows'
  * point and clicking each row is friction; catching up on a long turn, the same diffs are a wall.
  * The choice is per person, not per row, and each row can still be opened or closed on its own.
  */
+const state = createBroadcastState<boolean>('toolRowsOpen', false, (v) => typeof v === 'boolean')
+
 export function readToolRows(): boolean {
-  try {
-    return localStorage.getItem(KEY) === 'open'
-  } catch {
-    return false
-  }
+  return state.read()
 }
 
 export function toggleToolRows(): void {
-  const next = !readToolRows()
-  try {
-    localStorage.setItem(KEY, next ? 'open' : 'closed')
-  } catch {
-    // storage unavailable: the choice just does not persist
-  }
-  window.dispatchEvent(new CustomEvent(EVENT))
+  state.write(!state.read())
 }
 
 export function useToolRows(): boolean {
-  const [open, setOpen] = useState(readToolRows)
-  const sync = useCallback(() => setOpen(readToolRows()), [])
-  useEffect(() => {
-    window.addEventListener(EVENT, sync)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(EVENT, sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [sync])
-  return open
+  return useBroadcast(state)
 }

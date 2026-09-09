@@ -33,7 +33,7 @@ export function useHookClaims(): Map<string, HookClaim> {
   const [claims, setClaims] = useState<Map<string, HookClaim>>(new Map())
   const buf = useRef<Map<string, HookClaim>>(new Map())
   useEffect(() => {
-    const off = window.api.onHookEvent((e: HookEvent) => {
+    const off = window.api.hooks.onHookEvent((e: HookEvent) => {
       const state = claim(e)
       if (state) buf.current.set(e.session_id, { state, at: Date.parse(e.at) || Date.now() })
     })

@@ -407,3 +407,22 @@ export interface McpServer {
   /** the file it is configured in, when there is one */
   path: string | null
 }
+
+/** One entry in a directory listing. */
+export interface DirEntry {
+  name: string
+  path: string
+  dir: boolean
+  size: number
+  at: string
+}
+
+/** A file read for the viewer; big ones arrive truncated and binary ones arrive empty. */
+export interface FileContents {
+  path: string
+  text: string
+  size: number
+  truncated: boolean
+  binary: boolean
+  error: string | null
+}

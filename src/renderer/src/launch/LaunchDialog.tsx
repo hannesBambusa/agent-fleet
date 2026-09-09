@@ -45,7 +45,7 @@ export function LaunchDialog({ open, onClose, onLaunch }: Props): JSX.Element | 
   }
 
   async function addFolder(): Promise<void> {
-    const r = await window.api.pickRepo()
+    const r = await window.api.repos.pickRepo()
     if (r) {
       await refresh()
       pick(r)

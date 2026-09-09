@@ -36,7 +36,7 @@ export function DetailPanel({ s, agent, now, onOpen }: Props): JSX.Element {
           </button>
           {agent && exited && (
             <button
-              onClick={() => void window.api.removeAgent(agent.id)}
+              onClick={() => void window.api.agents.removeAgent(agent.id)}
               title="drop this agent from the fleet; its transcript stays on disk"
               className="chip hover:!text-[var(--danger)]"
             >
@@ -45,7 +45,7 @@ export function DetailPanel({ s, agent, now, onOpen }: Props): JSX.Element {
           )}
           {agent && !exited && (
             <button
-              onClick={() => void window.api.stopAgent(agent.id)}
+              onClick={() => void window.api.agents.stopAgent(agent.id)}
               title="end this agent's Claude process"
               className="chip hover:!text-[var(--danger)]"
             >

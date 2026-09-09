@@ -20,7 +20,7 @@ export function SeedBand({ repoPath, cwd }: { repoPath: string; cwd: string }): 
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      setPlan(await window.api.seedPlan(repoPath, cwd))
+      setPlan(await window.api.seed.seedPlan(repoPath, cwd))
     } catch {
       setPlan(null)
     }
@@ -38,7 +38,7 @@ export function SeedBand({ repoPath, cwd }: { repoPath: string; cwd: string }): 
   async function carry(items: SeedItem[]): Promise<void> {
     setBusy(items.map((i) => i.path).join(','))
     try {
-      const r = await window.api.seedApply(repoPath, cwd, items)
+      const r = await window.api.seed.seedApply(repoPath, cwd, items)
       setNote(
         r.failed.length
           ? `could not carry ${r.failed.join(', ')}`

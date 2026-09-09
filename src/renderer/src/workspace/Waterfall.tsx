@@ -102,7 +102,7 @@ export function Waterfall({
   const [hookSpans, setHookSpans] = useState<Span[]>([])
   useEffect(() => {
     setHookSpans([])
-    return window.api.onHookEvent((e) => {
+    return window.api.hooks.onHookEvent((e) => {
       if (e.session_id !== sessionId) return
       const at = Date.parse(e.at)
       if (e.event === 'PreToolUse') {

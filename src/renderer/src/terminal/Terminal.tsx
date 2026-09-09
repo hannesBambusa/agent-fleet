@@ -28,7 +28,7 @@ function ensureWired(): void {
     const t = (e as CustomEvent<Theme>).detail
     for (const entry of pool.values()) entry.term.options.theme = xtermTheme(t)
   })
-  window.api.onPtyData((id, data) => {
+  window.api.pty.onData((id, data) => {
     const t = pool.get(id)
     // before the history replay lands, live data is already part of that history
     if (t && t.primed) t.term.write(data)
@@ -62,21 +62,21 @@ function get(id: string): { term: XTerm; fit: FitAddon; primed: boolean } {
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown' || e.key !== 'Enter') return true
     if (e.shiftKey) {
-      window.api.ptyWrite(id, '\n')
+      window.api.pty.write(id, '\n')
       return false
     }
     if (e.ctrlKey) {
-      window.api.ptyWrite(id, '\x1b\r')
+      window.api.pty.write(id, '\x1b\r')
       return false
     }
     return true
   })
-  term.onData((d) => window.api.ptyWrite(id, d))
-  term.onResize(({ cols, rows }) => window.api.ptyResize(id, cols, rows))
+  term.onData((d) => window.api.pty.write(id, d))
+  term.onResize(({ cols, rows }) => window.api.pty.resize(id, cols, rows))
   t = { term, fit, primed: false }
   pool.set(id, t)
   // anything the pty printed before this pane existed
-  void window.api.ptyHistory(id).then((h) => {
+  void window.api.pty.history(id).then((h) => {
     const cur = pool.get(id)
     if (cur && !cur.primed) {
       cur.primed = true

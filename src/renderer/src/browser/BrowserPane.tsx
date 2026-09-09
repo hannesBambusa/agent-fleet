@@ -45,7 +45,7 @@ export function BrowserPane({ agent }: { agent: Agent | null }): JSX.Element {
       if (overlaysOpen()) {
         if (last !== 'parked') {
           last = 'parked'
-          window.api.browserLayout(null, null)
+          window.api.browser.layout(null, null)
         }
         return
       }
@@ -59,7 +59,7 @@ export function BrowserPane({ agent }: { agent: Agent | null }): JSX.Element {
       const key = `${id}:${b.x},${b.y},${b.width},${b.height}`
       if (key === last) return
       last = key
-      window.api.browserLayout(id, b)
+      window.api.browser.layout(id, b)
     }
     report()
     const ro = new ResizeObserver(report)
@@ -74,7 +74,7 @@ export function BrowserPane({ agent }: { agent: Agent | null }): JSX.Element {
       offOverlay()
       window.removeEventListener('scroll', report, true)
       window.removeEventListener('resize', report)
-      window.api.browserLayout(null, null)
+      window.api.browser.layout(null, null)
     }
   }, [id])
 
@@ -83,11 +83,11 @@ export function BrowserPane({ agent }: { agent: Agent | null }): JSX.Element {
       setState(null)
       return
     }
-    void window.api.browserState(id).then((s) => {
+    void window.api.browser.state(id).then((s) => {
       setState(s)
       if (s && !editing) setUrl(s.url === 'about:blank' ? '' : s.url)
     })
-    const off = window.api.onBrowserUpdate((sid, s) => {
+    const off = window.api.browser.onUpdate((sid, s) => {
       if (sid !== id) return
       setState(s)
       if (!editing) setUrl(s.url === 'about:blank' ? '' : s.url)
@@ -98,18 +98,18 @@ export function BrowserPane({ agent }: { agent: Agent | null }): JSX.Element {
   return (
     <div className="flex h-full w-full min-w-0 flex-1 flex-col bg-[var(--panel)]">
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--line)] px-2">
-        <NavButton label="←" title="back" disabled={!id || !state?.canGoBack} onClick={() => id && void window.api.browserBack(id)} />
+        <NavButton label="←" title="back" disabled={!id || !state?.canGoBack} onClick={() => id && void window.api.browser.back(id)} />
         <NavButton
           label="→"
           title="forward"
           disabled={!id || !state?.canGoForward}
-          onClick={() => id && void window.api.browserForward(id)}
+          onClick={() => id && void window.api.browser.forward(id)}
         />
         <NavButton
           label={state?.loading ? '✕' : '⟳'}
           title={state?.loading ? 'stop' : 'reload'}
           disabled={!id}
-          onClick={() => id && void window.api.browserReload(id)}
+          onClick={() => id && void window.api.browser.reload(id)}
         />
         <input
           className="field min-w-0 flex-1"
@@ -129,7 +129,7 @@ export function BrowserPane({ agent }: { agent: Agent | null }): JSX.Element {
               e.currentTarget.blur()
             }
             if (e.key === 'Enter' && id && url.trim()) {
-              void window.api.browserNavigate(id, url.trim())
+              void window.api.browser.navigate(id, url.trim())
               e.currentTarget.blur()
             }
           }}

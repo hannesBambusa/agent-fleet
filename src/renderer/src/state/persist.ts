@@ -10,8 +10,8 @@ import { useCallback, useEffect, useState } from 'react'
  * Deliberately not for anything about a particular session: which agent is selected belongs to the
  * moment, not to the setup.
  */
-export { readPersisted, writePersisted, forgetAll } from './store'
-import { key } from './store'
+export { readPersisted, writePersisted, forgetAll, createBroadcastState } from './store'
+import { key, type Broadcast } from './store'
 
 export function usePersisted<T>(name: string, fallback: T, valid?: (v: unknown) => boolean): [T, (v: T) => void] {
   const full = key(name)
@@ -43,4 +43,11 @@ export function usePersisted<T>(name: string, fallback: T, valid?: (v: unknown) 
 /** The same, for a value that must be one of a known set. */
 export function usePersistedOneOf<T extends string>(name: string, options: readonly T[], fallback: T): [T, (v: T) => void] {
   return usePersisted<T>(name, fallback, (v) => typeof v === 'string' && (options as readonly string[]).includes(v))
+}
+
+/** Follows a broadcast value, so a component re-renders when any other part of the app changes it. */
+export function useBroadcast<T>(state: Broadcast<T>): T {
+  const [value, setValue] = useState<T>(state.read)
+  useEffect(() => state.subscribe(() => setValue(state.read())), [state])
+  return value
 }

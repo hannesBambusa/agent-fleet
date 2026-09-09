@@ -6,7 +6,7 @@ import { Center } from './History'
 export function Branches({ cwd }: { cwd: string }): JSX.Element {
   const [list, setList] = useState<GitBranch[] | null>(null)
   useEffect(() => {
-    void window.api.gitBranches(cwd).then(setList).catch(() => setList([]))
+    void window.api.git.branches(cwd).then(setList).catch(() => setList([]))
   }, [cwd])
 
   if (!list) return <Center>reading branches…</Center>

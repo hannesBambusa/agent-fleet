@@ -32,7 +32,7 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      setPlan(await window.api.gitShipPlan(cwd))
+      setPlan(await window.api.git.shipPlan(cwd))
     } catch {
       setPlan(null)
     } finally {
@@ -49,7 +49,7 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
 
   // steps arrive one at a time while ship runs, so the timeline fills in rather than appearing at the end
   useEffect(() => {
-    return window.api.onShipEvent((e: ShipEvent) => {
+    return window.api.git.onShipEvent((e: ShipEvent) => {
       setLive((prev) => ({ ...prev, [e.key]: { done: e.done, ok: e.ok, text: e.text, ms: e.ms } }))
       requestAnimationFrame(() => tail.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
     })
@@ -65,7 +65,7 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
     setResult(null)
     setLive({})
     try {
-      setResult(await window.api.gitShip(cwd, message))
+      setResult(await window.api.git.ship(cwd, message))
     } catch (err) {
       setResult({
         ok: false,
@@ -155,7 +155,7 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
                 <div>
                   origin/{plan.into} is now {result.sha}.{' '}
                   {result.url && (
-                    <button onClick={() => void window.api.openExternal(result.url!)} className="text-[var(--accent)] hover:underline">
+                    <button onClick={() => void window.api.shell.openExternal(result.url!)} className="text-[var(--accent)] hover:underline">
                       view the commit on GitHub ↗
                     </button>
                   )}
@@ -164,7 +164,7 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
                   <div>
                     {result.deploy.detail}.{' '}
                     <button
-                      onClick={() => void window.api.openExternal(result.deploy!.url)}
+                      onClick={() => void window.api.shell.openExternal(result.deploy!.url)}
                       className="text-[var(--accent)] hover:underline"
                     >
                       {result.deploy.name} ↗

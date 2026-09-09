@@ -70,7 +70,7 @@ export function useCatalogItems(): SlashItem[] {
   const [items, setItems] = useState<CatalogItem[]>([])
   useEffect(() => {
     void window.api
-      .catalog()
+      .catalog.items()
       .then(setItems)
       .catch(() => setItems([]))
   }, [])

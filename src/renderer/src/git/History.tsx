@@ -27,21 +27,21 @@ export function History({ cwd }: { cwd: string }): JSX.Element {
     setDetail(null)
     setFile(null)
     // every ref, not just this branch: the point of a graph is seeing the other branches
-    void window.api.gitGraph(cwd, 200).then(setList).catch(() => setList([]))
+    void window.api.git.graph(cwd, 200).then(setList).catch(() => setList([]))
   }, [cwd])
 
   useEffect(() => {
     if (!sha) return
     setFile(null)
     setDiff('')
-    void window.api.gitCommit(cwd, sha).then(setDetail).catch(() => setDetail(null))
+    void window.api.git.commit(cwd, sha).then(setDetail).catch(() => setDetail(null))
   }, [cwd, sha])
 
   const { rows, width } = useMemo(() => layout(list ?? []), [list])
 
   useEffect(() => {
     if (!sha || !file) return
-    void window.api.gitDiff(cwd, file, false, false, undefined, sha).then(setDiff).catch(() => setDiff(''))
+    void window.api.git.diff(cwd, file, false, false, undefined, sha).then(setDiff).catch(() => setDiff(''))
   }, [cwd, sha, file])
 
   if (!list) return <Center>reading history…</Center>

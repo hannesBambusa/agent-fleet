@@ -1,19 +1,59 @@
-import { memo } from 'react'
+import { Children, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { openLink } from '../state/openLink'
+import { openFile, resolvePath, splitPaths } from '../state/openFile'
 
 /**
  * Claude writes markdown, so the chat renders markdown. Everything is styled from the app's tokens
  * rather than a stylesheet, and long paths and code are allowed to wrap instead of stretching the
  * pane, since a chat column is narrow and full of absolute paths.
  */
-export const Markdown = memo(function Markdown({ text, agentId }: { text: string; agentId?: string | null }): JSX.Element {
+/**
+ * Turns the file paths inside a piece of text into links to the app's own viewer.
+ *
+ * Claude names files constantly, and following one meant reading the path and finding it in an
+ * editor. Only strings are rewritten: anything react-markdown already turned into an element (a
+ * link, a code span) is left exactly as it was.
+ */
+function withPaths(children: React.ReactNode, cwd: string): React.ReactNode {
+  if (!cwd) return children
+  return Children.map(children, (child) => {
+    if (typeof child !== 'string') return child
+    const pieces = splitPaths(child)
+    if (pieces.length === 1 && !pieces[0].path) return child
+    return pieces.map((p, i) =>
+      p.path ? <FileLink key={i} path={p.text} cwd={cwd} /> : <span key={i}>{p.text}</span>
+    )
+  })
+}
+
+function FileLink({ path, cwd }: { path: string; cwd: string }): JSX.Element {
+  return (
+    <button
+      onClick={() => openFile(resolvePath(path, cwd, window.api.home))}
+      title={`open ${path} in the file browser`}
+      className="mono cursor-pointer rounded bg-[var(--raised)] px-1 py-[1px] text-[0.92em] text-[var(--accent)] underline decoration-[var(--accent)]/30 hover:decoration-[var(--accent)]"
+    >
+      {path}
+    </button>
+  )
+}
+
+export const Markdown = memo(function Markdown({
+  text,
+  agentId,
+  cwd = ''
+}: {
+  text: string
+  agentId?: string | null
+  cwd?: string
+}): JSX.Element {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{withPaths(children, cwd)}</p>,
         strong: ({ children }) => <strong className="font-semibold text-[var(--fg)]">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         a: ({ children, href }) => (
@@ -25,7 +65,7 @@ export const Markdown = memo(function Markdown({ text, agentId }: { text: string
             onClick={(e) => {
               e.preventDefault()
               if (!href) return
-              if (e.metaKey || e.shiftKey) void window.api.openExternal(href)
+              if (e.metaKey || e.shiftKey) void window.api.shell.openExternal(href)
               else openLink(href, agentId ?? null)
             }}
             className="cursor-pointer text-[var(--accent)] underline decoration-[var(--accent)]/40 hover:decoration-[var(--accent)]"
@@ -45,7 +85,7 @@ export const Markdown = memo(function Markdown({ text, agentId }: { text: string
           return (
             <li className={ordered ? 'pl-1 leading-relaxed' : 'relative pl-4 leading-relaxed'}>
               {!ordered && <span className="absolute left-0 top-[0.62em] h-[3px] w-[3px] rounded-full bg-[var(--dim)]" />}
-              {children}
+              {withPaths(children, cwd)}
             </li>
           )
         },
@@ -56,6 +96,11 @@ export const Markdown = memo(function Markdown({ text, agentId }: { text: string
         code: ({ children, className }) => {
           const block = /language-/.test(className ?? '')
           if (!block) {
+            // a path in backticks is the most common way one is written; make that one a link too
+            const only = Children.toArray(children)
+            const text = typeof only[0] === 'string' && only.length === 1 ? only[0] : ''
+            const pieces = text ? splitPaths(text) : []
+            if (cwd && pieces.length === 1 && pieces[0].path) return <FileLink path={text} cwd={cwd} />
             return (
               <code className="mono rounded bg-[var(--raised)] px-1 py-[1px] text-[0.92em] text-[var(--fg)]">{children}</code>
             )

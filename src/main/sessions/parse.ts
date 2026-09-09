@@ -60,7 +60,33 @@ const EDIT_CAP = 2400
 // files are only opened for an edit this fresh: replaying history would read hundreds of them, and
 // the numbers would be wrong anyway once the file has moved on
 const LOCATE_MS = 10 * 60 * 1000
-const LOCATE_MAX_BYTES = 2 * 1024 * 1024
+const LOCATE_MAX_BYTES = 512 * 1024
+
+// One MultiEdit, or a run of edits to the same file, would otherwise read it from disk once per
+// call, synchronously, on the thread that answers every IPC message. Keyed by mtime, so an edit
+// that lands changes the key and the next lookup reads the new content.
+const bodies = new Map<string, { mtime: number; text: string }>()
+
+function bodyOf(path: string): string | null {
+  let st: { size: number; mtimeMs: number }
+  try {
+    st = statSync(path)
+  } catch {
+    return null
+  }
+  if (st.size > LOCATE_MAX_BYTES) return null
+  const seen = bodies.get(path)
+  if (seen && seen.mtime === st.mtimeMs) return seen.text
+  try {
+    const text = readFileSync(path, 'utf8')
+    // a handful of files are in flight at a time; this is a burst cache, not a store
+    if (bodies.size > 24) bodies.clear()
+    bodies.set(path, { mtime: st.mtimeMs, text })
+    return text
+  } catch {
+    return null
+  }
+}
 
 /**
  * Which line an edit lands on.
@@ -72,15 +98,11 @@ const LOCATE_MAX_BYTES = 2 * 1024 * 1024
 function lineOf(path: string, needle: string, ts: string): number | undefined {
   if (!path || !needle) return undefined
   if (Date.now() - Date.parse(ts) > LOCATE_MS) return undefined
-  try {
-    if (statSync(path).size > LOCATE_MAX_BYTES) return undefined
-    const body = readFileSync(path, 'utf8')
-    const at = body.indexOf(needle)
-    if (at < 0 || body.indexOf(needle, at + 1) >= 0) return undefined
-    return body.slice(0, at).split('\n').length
-  } catch {
-    return undefined
-  }
+  const body = bodyOf(path)
+  if (!body) return undefined
+  const at = body.indexOf(needle)
+  if (at < 0 || body.indexOf(needle, at + 1) >= 0) return undefined
+  return body.slice(0, at).split('\n').length
 }
 
 /**

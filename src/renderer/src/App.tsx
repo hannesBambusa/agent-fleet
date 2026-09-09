@@ -179,7 +179,7 @@ export default function App(): JSX.Element {
   async function launch(req: LaunchRequest): Promise<void> {
     setLaunching(false)
     const { cols, rows } = termSize()
-    const a = await window.api.launchAgent(req, cols, rows)
+    const a = await window.api.agents.launchAgent(req, cols, rows)
     setSelected(a.sessionId)
     setOpened(a.sessionId)
   }

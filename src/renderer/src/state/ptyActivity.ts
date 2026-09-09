@@ -13,7 +13,7 @@ export function usePtyActivity(): Map<string, number> {
   const [seen, setSeen] = useState<Map<string, number>>(new Map())
   const buf = useRef<Map<string, number>>(new Map())
   useEffect(() => {
-    const off = window.api.onPtyData((id) => {
+    const off = window.api.pty.onData((id) => {
       buf.current.set(id, Date.now())
     })
     const t = setInterval(() => {
