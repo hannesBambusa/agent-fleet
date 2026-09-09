@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { constants, copyFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ApplyPlan, MergePlan } from '../../shared/types'
-import { baseOf, git, MAX_BUFFER, run, upstreamState, worktrees } from './exec'
+import { baseOf, git, isRepo, MAX_BUFFER, run, upstreamState, worktrees } from './exec'
 
 // Operations that write: every one of them sits behind a button the user pressed, and each is
 // preceded by a plan that says what it would do and refuses when that is unsafe.
@@ -46,8 +46,12 @@ export function unstage(cwd: string, paths: string[]): Promise<string> {
 /**
  * What merging this branch would do, and every reason it should not run. Checked before anything is
  * touched, because a refused merge is cheap and a half-finished one is not.
+ *
+ * `null` when this directory is not a repository: there is no merge to describe, not even a refused
+ * one, and the pane has nothing to offer.
  */
-export async function mergePlan(cwd: string): Promise<MergePlan> {
+export async function mergePlan(cwd: string): Promise<MergePlan | null> {
+  if (!(await isRepo(cwd))) return null
   const branch = (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   const into = (await baseOf(cwd, branch)) ?? ''
   const plan: MergePlan = { ok: false, reason: null, branch, into, commits: 0, files: 0, fastForward: false, at: null }
@@ -95,7 +99,7 @@ export async function mergePlan(cwd: string): Promise<MergePlan> {
 
 export async function merge(cwd: string): Promise<string> {
   const plan = await mergePlan(cwd)
-  if (!plan.ok || !plan.at) throw new Error(plan.reason ?? 'merge refused')
+  if (!plan?.ok || !plan.at) throw new Error(plan?.reason ?? 'merge refused')
   try {
     const out = await git(plan.at, ['merge', '--no-edit', plan.branch])
     return out.trim() || `merged ${plan.branch} into ${plan.into}`
@@ -156,7 +160,9 @@ async function dirtyPaths(cwd: string): Promise<string[]> {
   return out
 }
 
-export async function applyPlan(cwd: string): Promise<ApplyPlan> {
+/** `null` for the same reason as `mergePlan`: no repository here, so there is nothing to apply. */
+export async function applyPlan(cwd: string): Promise<ApplyPlan | null> {
+  if (!(await isRepo(cwd))) return null
   const branch = (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   const base = (await baseOf(cwd, branch)) ?? ''
   const plan: ApplyPlan = {
@@ -235,7 +241,7 @@ export async function applyPlan(cwd: string): Promise<ApplyPlan> {
 
 export async function applyChanges(cwd: string): Promise<string> {
   const plan = await applyPlan(cwd)
-  if (!plan.ok || !plan.at) throw new Error(plan.reason ?? 'apply refused')
+  if (!plan?.ok || !plan.at) throw new Error(plan?.reason ?? 'apply refused')
   const base = plan.into
   const patch = await fullPatch(cwd, base)
 
@@ -340,7 +346,7 @@ export async function pushAsBranch(cwd: string, name: string): Promise<string> {
  */
 export async function publish(cwd: string): Promise<string> {
   const plan = await mergePlan(cwd)
-  if (!plan.ok || !plan.at) throw new Error(plan.reason ?? 'publish refused')
+  if (!plan?.ok || !plan.at) throw new Error(plan?.reason ?? 'publish refused')
   const merged = await merge(cwd)
   const pushed = await new Promise<string>((resolve, reject) => {
     execFile('git', ['push'], { cwd: plan.at!, timeout: 120000, maxBuffer: MAX_BUFFER }, (err, stdout, stderr) => {

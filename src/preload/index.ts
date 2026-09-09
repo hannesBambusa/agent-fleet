@@ -73,11 +73,12 @@ const api = {
 
   usage: (): Promise<UsageSnapshot> => ipcRenderer.invoke('usage:read'),
   slashCommands: (cwd: string): Promise<SlashCommand[]> => ipcRenderer.invoke('commands:list', cwd),
-  gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke('git:status', cwd),
+  // null from any of the three below means the directory is not a git repository, not a failure
+  gitStatus: (cwd: string): Promise<GitStatus | null> => ipcRenderer.invoke('git:status', cwd),
   gitPush: (cwd: string): Promise<string> => ipcRenderer.invoke('git:push', cwd),
   gitGraph: (cwd: string, max?: number): Promise<GitCommit[]> => ipcRenderer.invoke('git:graph', cwd, max),
   gitLog: (cwd: string): Promise<GitCommit[]> => ipcRenderer.invoke('git:log', cwd),
-  gitMergePlan: (cwd: string): Promise<MergePlan> => ipcRenderer.invoke('git:mergePlan', cwd),
+  gitMergePlan: (cwd: string): Promise<MergePlan | null> => ipcRenderer.invoke('git:mergePlan', cwd),
   gitMerge: (cwd: string): Promise<string> => ipcRenderer.invoke('git:merge', cwd),
   gitPublish: (cwd: string): Promise<string> => ipcRenderer.invoke('git:publish', cwd),
   seedPlan: (repoPath: string, worktree: string): Promise<SeedPlan> => ipcRenderer.invoke('seed:plan', repoPath, worktree),
@@ -88,7 +89,7 @@ const api = {
   gitShip: (cwd: string, message: string): Promise<ShipResult> => ipcRenderer.invoke('git:ship', cwd, message),
   gitPrUrl: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:prUrl', cwd),
   gitPushBranch: (cwd: string, name: string): Promise<string> => ipcRenderer.invoke('git:pushBranch', cwd, name),
-  gitApplyPlan: (cwd: string): Promise<ApplyPlan> => ipcRenderer.invoke('git:applyPlan', cwd),
+  gitApplyPlan: (cwd: string): Promise<ApplyPlan | null> => ipcRenderer.invoke('git:applyPlan', cwd),
   gitApply: (cwd: string): Promise<string> => ipcRenderer.invoke('git:apply', cwd),
   gitCommit: (cwd: string, sha: string): Promise<GitCommitDetail> => ipcRenderer.invoke('git:commit', cwd, sha),
   gitBranches: (cwd: string): Promise<GitBranch[]> => ipcRenderer.invoke('git:branches', cwd),
