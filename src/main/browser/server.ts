@@ -49,7 +49,16 @@ export function startBrowserServer(browser: BrowserManager, onActivity?: (agentI
       })()
     })
   })
-  server.on('error', (err) => console.error('[browser] control server failed', err))
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `[browser] port ${BROWSER_PORT} is taken, so agents cannot drive their browser pane. Another ` +
+          `agent-fleet is probably running; quit it, or set AGENT_FLEET_BROWSER_PORT for this one.`
+      )
+      return
+    }
+    console.error('[browser] control server failed', err)
+  })
   server.listen(BROWSER_PORT, '127.0.0.1')
   return server
 }

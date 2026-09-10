@@ -15,9 +15,19 @@ export function useSessions(): Session[] {
         return next
       })
     })
+    // a session whose transcript the app deleted should leave the screen at once, not on restart
+    const offGone = window.api.sessions.onSessionGone((id) => {
+      setMap((prev) => {
+        if (!prev.has(id)) return prev
+        const next = new Map(prev)
+        next.delete(id)
+        return next
+      })
+    })
     return () => {
       alive = false
       off()
+      offGone()
     }
   }, [])
   return [...map.values()].sort((a, b) => (b.lastEventAt ?? '').localeCompare(a.lastEventAt ?? ''))

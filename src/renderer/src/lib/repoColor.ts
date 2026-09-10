@@ -9,12 +9,22 @@ export const REPO_COLORS = ['#3987e5', '#d95926', '#199e70', '#9085e9', '#c98500
 
 const KEY = 'agent-fleet.repoColors'
 
-function overrides(): Record<string, number> {
+/**
+ * A chosen colour is either one of the eight above, by index, or any colour at all, as a hex string.
+ * The index form is what earlier versions wrote, and is still read so nobody loses their choices.
+ */
+type Choice = number | string
+
+function overrides(): Record<string, Choice> {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, number>
+    return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, Choice>
   } catch {
     return {}
   }
+}
+
+export function isHex(v: unknown): v is string {
+  return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
 }
 
 function hash(s: string): number {
@@ -25,8 +35,14 @@ function hash(s: string): number {
 
 export function repoColor(repoPath: string): string {
   const chosen = overrides()[repoPath]
+  if (isHex(chosen)) return chosen
   if (typeof chosen === 'number' && REPO_COLORS[chosen]) return REPO_COLORS[chosen]
   return REPO_COLORS[hash(repoPath) % REPO_COLORS.length]
+}
+
+/** Whether this repo is on a colour someone picked, as opposed to the one it was dealt. */
+export function repoColorChosen(repoPath: string): boolean {
+  return overrides()[repoPath] !== undefined
 }
 
 export function repoColorIndex(repoPath: string): number {
@@ -35,8 +51,11 @@ export function repoColorIndex(repoPath: string): number {
   return hash(repoPath) % REPO_COLORS.length
 }
 
-export function setRepoColor(repoPath: string, index: number): void {
-  const next = { ...overrides(), [repoPath]: index }
+export function setRepoColor(repoPath: string, choice: Choice | null): void {
+  const next = { ...overrides() }
+  // null puts it back to the colour the repo's own name works out to
+  if (choice === null) delete next[repoPath]
+  else next[repoPath] = choice
   try {
     localStorage.setItem(KEY, JSON.stringify(next))
   } catch {

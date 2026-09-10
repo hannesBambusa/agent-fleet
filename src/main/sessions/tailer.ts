@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import type { Session, SessionState } from '../../shared/types'
 import { applyLine } from './parse'
 import { topicFor } from './topics'
+import { labelFor } from './labels'
 import { Liveness } from './liveness'
 
 const PROJECTS = join(homedir(), '.claude', 'projects')
@@ -20,7 +21,9 @@ const HISTORY_MS = 3 * 24 * 60 * 60 * 1000
 // a session this fresh is live even if the process scan has not caught up
 const GRACE_MS = 90 * 1000
 // a subagent writes to its log only while it works, so recent output means it is still running
-const SUBAGENT_ACTIVE_MS = 60 * 1000
+// A subagent between two tool calls is thinking, not waiting for anyone, so it is given far longer
+// than a minute of quiet before it is called idle. A minute was shorter than a single search.
+const SUBAGENT_ACTIVE_MS = 3 * 60 * 1000
 // a session that just finished a tool call is thinking about the next one, not idle
 const BETWEEN_TOOLS_MS = 25 * 1000
 // after the last words of an answer, a session is waiting for its human again
@@ -72,6 +75,49 @@ export class Tailer extends EventEmitter {
   get(id: string): Session | undefined {
     for (const t of this.files.values()) if (t.session.id === id) return t.session
     return undefined
+  }
+
+  /**
+   * The name and note shown for a session. A label someone typed wins outright; failing that, the
+   * topic file, then whatever Claude Code called it.
+   */
+  private retitle(s: Session): void {
+    const label = labelFor(s.id)
+    s.note = label?.note || null
+    s.topic = label?.name || topicFor(s.id, s.cwd)
+  }
+
+  /** Re-read a session's label and tell the app, after someone has just changed it. */
+  relabel(sessionId: string): Session | undefined {
+    const s = this.get(sessionId)
+    if (!s) return undefined
+    this.retitle(s)
+    this.emit('update', s)
+    return s
+  }
+
+  /** Every transcript belonging to a session: its own, and its subagents'. */
+  filesOf(sessionId: string): string[] {
+    const out: string[] = []
+    for (const [file, t] of this.files) {
+      if (t.session.id === sessionId || t.session.parentId === sessionId) out.push(file)
+    }
+    return out
+  }
+
+  /**
+   * Drop a session the app has just deleted from disk.
+   *
+   * Without this the tailer keeps the parsed copy in memory and the card stays on screen until a
+   * restart: nothing in the poll notices a file that stopped existing, because a missing file is
+   * indistinguishable from one that has not been written yet.
+   */
+  forget(sessionId: string): void {
+    for (const [file, t] of [...this.files]) {
+      if (t.session.id !== sessionId && t.session.parentId !== sessionId) continue
+      this.files.delete(file)
+      this.emit('gone', t.session.id)
+    }
   }
 
   applyHook(id: string, state: SessionState, at: string, tool?: string, clearTool = false): void {
@@ -136,7 +182,7 @@ export class Tailer extends EventEmitter {
       if (t.session.state !== before) changed.add(t.session)
     }
     for (const s of changed) {
-      if (!s.parentId) s.topic = topicFor(s.id, s.cwd)
+      if (!s.parentId) this.retitle(s)
       this.emit('update', s)
     }
   }
@@ -221,6 +267,8 @@ export class Tailer extends EventEmitter {
       lastCommand: null,
       lastCommandAt: null,
       commands: [],
+      turnEnded: false,
+      note: null,
       lastPrompt: null,
       lastPromptAt: null,
       lastEventAt: null,
@@ -295,6 +343,14 @@ export function stateOf(s: Session, now: number): { state: SessionState; clearTo
   if (s.closed) return { state: 'ended', clearTool: false }
   if (age > ENDED_MS) return { state: 'ended', clearTool: false }
 
+  // A finished turn is a fact the transcript states outright, so it outranks anything inferred from
+  // how recently a line was written. A hook claim only wins if it arrived after that last line —
+  // which is what a new prompt looks like, a second before the transcript catches up.
+  const hookIsNewer = s.hookState ? Date.parse(s.hookState.at) > Date.parse(s.lastEventAt ?? '') : false
+  if (s.turnEnded && !hookIsNewer) {
+    return { state: age > STALE_MS ? 'stale' : 'idle', clearTool: true }
+  }
+
   if (s.hookState) {
     const said = now - Date.parse(s.hookState.at)
     const h = s.hookState.state
@@ -312,7 +368,13 @@ export function stateOf(s: Session, now: number): { state: SessionState; clearTo
 
   if (age > STALE_MS) return { state: 'stale', clearTool: false }
   // a subagent has no user to wait for: between two tool calls it is thinking, not idle
-  if (s.parentId) return { state: age < SUBAGENT_ACTIVE_MS ? 'running' : 'idle', clearTool: false }
+  if (s.parentId) {
+    // The same evidence a root session is judged on: an open tool call is work, whatever its age.
+    // Judging a subagent purely on how recently it wrote made one vanish mid-search — a long call
+    // writes nothing while it runs, and the fleet only shows subagents that are working.
+    if (working(s, now)) return { state: 'running', clearTool: false }
+    return { state: age < SUBAGENT_ACTIVE_MS ? 'running' : 'idle', clearTool: false }
+  }
   if (working(s, now)) return { state: 'running', clearTool: false }
   // nothing is running, so nothing is "currently" a tool either
   return { state: 'idle', clearTool: true }

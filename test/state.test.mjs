@@ -51,6 +51,7 @@ function session(over = {}) {
     parentId: null,
     closed: false,
     hookState: null,
+    turnEnded: false,
     currentTool: null,
     transcript: [],
     lastEventAt: ago(SECOND),
@@ -107,7 +108,8 @@ test('a fresh prompt is running, an old one is not', () => {
 
 test('a subagent between two tool calls is thinking, not idle', () => {
   assert.equal(state({ parentId: 'p1', lastEventAt: ago(30 * SECOND), transcript: [] }), 'running')
-  assert.equal(state({ parentId: 'p1', lastEventAt: ago(2 * MINUTE), transcript: [] }), 'idle')
+  assert.equal(state({ parentId: 'p1', lastEventAt: ago(2 * MINUTE), transcript: [] }), 'running')
+  assert.equal(state({ parentId: 'p1', lastEventAt: ago(4 * MINUTE), transcript: [] }), 'idle')
 })
 
 test('a hook claim of running wins, but only while it is fresh', () => {
@@ -172,6 +174,44 @@ test('Stop hands the turn back, SessionEnd closes it', () => {
 test('an unknown event claims nothing rather than guessing', () => {
   assert.equal(claimFor('PreCompact'), null)
   assert.equal(claimFor(''), null)
+})
+
+test('a subagent mid-tool-call stays running however long the call takes', () => {
+  // the bug this covers: a search that ran longer than a minute made the subagent vanish
+  const s = session({
+    parentId: 'p1',
+    lastEventAt: ago(4 * MINUTE),
+    transcript: [item('tool', 4 * MINUTE)]
+  })
+  assert.equal(stateOf(s, NOW).state, 'running')
+})
+
+test('a finished turn is idle at once, not after the settle window', () => {
+  // the transcript says the turn ended; nothing has to be inferred from how recent the line is
+  const s = session({ turnEnded: true, lastEventAt: ago(SECOND), transcript: [item('text', SECOND)] })
+  assert.equal(stateOf(s, NOW).state, 'idle')
+  assert.equal(stateOf(s, NOW).clearTool, true)
+})
+
+test('a turn that continues into a tool call is still running', () => {
+  const s = session({ turnEnded: false, lastEventAt: ago(SECOND), transcript: [item('tool', SECOND)] })
+  assert.equal(stateOf(s, NOW).state, 'running')
+})
+
+test('a hook that arrived after the last line still wins', () => {
+  // a new prompt raises a hook a second before the transcript catches up
+  const s = session({
+    turnEnded: true,
+    lastEventAt: ago(30 * SECOND),
+    hookState: { state: 'running', at: ago(2 * SECOND) },
+    transcript: [item('text', 30 * SECOND)]
+  })
+  assert.equal(stateOf(s, NOW).state, 'running')
+})
+
+test('a finished turn goes stale like anything else once it is old', () => {
+  const s = session({ turnEnded: true, lastEventAt: ago(20 * MINUTE), transcript: [item('text', 20 * MINUTE)] })
+  assert.equal(stateOf(s, NOW).state, 'stale')
 })
 
 test.after(() => rmSync(dir, { recursive: true, force: true }))

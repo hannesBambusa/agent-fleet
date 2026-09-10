@@ -5,3 +5,4 @@ dist/
 commit/
 *.tsbuildinfo
 release/
+.claude/worktrees/

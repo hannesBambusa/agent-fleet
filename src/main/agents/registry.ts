@@ -8,6 +8,7 @@ import type { Agent, AgentStatus, LaunchRequest } from '../../shared/types'
 import type { PtyManager } from '../pty/manager'
 import { BROWSER_PORT, BROWSER_SECRET } from '../browser/server'
 import { seedAuto } from '../git/seed'
+import { placeHandoff } from '../files/handoff'
 
 const FILE = (): string => join(app.getPath('userData'), 'agents.json')
 const SCRIPTS = (): string => join(app.getPath('userData'), 'launch')
@@ -150,6 +151,7 @@ export class AgentRegistry extends EventEmitter {
       prompt: req.prompt,
       worktree: req.worktree,
       titled,
+      handoff: req.handoff,
       browser: req.browser,
       chat: req.chat,
       detached: req.detached,
@@ -295,6 +297,8 @@ export class AgentRegistry extends EventEmitter {
 
     this.ptys.spawn(a.id, { cwd, cols, rows, command, env: { AGENT_FLEET_AGENT: a.id } })
     if (a.worktree && mode === 'new') void this.seedWhenReady(a)
+    // without a worktree the agent works in the repository itself, which exists already
+    else if (a.handoff && mode === 'new') void placeHandoff(a.repoPath, a.handoff)
   }
 
   /**
@@ -309,6 +313,7 @@ export class AgentRegistry extends EventEmitter {
       if (existsSync(dir)) {
         // the directory appears before the checkout is finished, so let it settle
         await new Promise((r) => setTimeout(r, 1500))
+        if (a.handoff) await placeHandoff(dir, a.handoff)
         try {
           const done = await seedAuto(a.repoPath, dir)
           if (done.length) {

@@ -50,11 +50,30 @@ export function unstage(cwd: string, paths: string[]): Promise<string> {
 export async function mergePlan(cwd: string): Promise<MergePlan> {
   const branch = (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   const into = (await baseOf(cwd, branch)) ?? ''
-  const plan: MergePlan = { ok: false, reason: null, branch, into, commits: 0, files: 0, fastForward: false, at: null }
+  const plan: MergePlan = {
+    ok: false,
+    reason: null,
+    branch,
+    into,
+    commits: 0,
+    files: 0,
+    fastForward: false,
+    merged: false,
+    baseUnpushed: 0,
+    at: null
+  }
   if (!into) {
     plan.reason = 'no base branch to merge into'
     return plan
   }
+
+  // Where the work stands is worth knowing whatever stops the merge, so it is measured before any of
+  // the refusals below. A dirty worktree used to return here with "0 commits", which reads as "there
+  // is nothing here" when the truth may be that everything committed has already landed in main.
+  plan.commits = Number((await git(cwd, ['rev-list', '--count', `${into}..HEAD`])).trim()) || 0
+  plan.merged = plan.commits === 0
+  plan.baseUnpushed = Number((await git(cwd, ['rev-list', '--count', `origin/${into}..${into}`])).trim()) || 0
+  plan.files = (await git(cwd, ['diff', '--name-only', `${into}...HEAD`])).split('\n').filter(Boolean).length
 
   const dirty = (await git(cwd, ['status', '--porcelain', '-uno'])).trim()
   if (dirty) {
@@ -62,13 +81,10 @@ export async function mergePlan(cwd: string): Promise<MergePlan> {
     return plan
   }
 
-  plan.commits = Number((await git(cwd, ['rev-list', '--count', `${into}..HEAD`])).trim()) || 0
   if (!plan.commits) {
     plan.reason = `nothing to merge; ${branch} adds no commits to ${into}`
     return plan
   }
-  plan.files = (await git(cwd, ['diff', '--name-only', `${into}...HEAD`])).split('\n').filter(Boolean).length
-
   // the target branch lives in whichever checkout has it; that is where the merge must happen
   const wts = await worktrees(cwd)
   const host = wts.find((w) => w.branch === into)

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '../../../shared/types'
 import { age, tokens } from '../lib/format'
 import { buildGraph, CARD_H, CARD_W, edgePath, REPO_H, REPO_W } from './graph'
-import { repoColor, repoColorIndex, REPO_COLORS, setRepoColor } from '../lib/repoColor'
+import { repoColor } from '../lib/repoColor'
+import { ColorPicker } from './ColorPicker'
+import { useFlagged } from '../state/attention'
 
 interface Props {
   sessions: Session[]
@@ -24,6 +26,7 @@ function autoExpanded(sessions: Session[]): Set<string> {
 }
 
 export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JSX.Element {
+  const flagged = useFlagged()
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
   const [picker, setPicker] = useState<string | null>(null)
   // repaint when a colour is chosen, since the mapping lives outside React
@@ -78,7 +81,15 @@ export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JS
             <div
               key={r.key}
               className="card absolute flex cursor-pointer flex-col justify-center overflow-visible px-3"
-              style={{ left: r.x, top: r.y, width: REPO_W, height: REPO_H, borderColor: `${tint}66` }}
+              style={{
+                left: r.x,
+                top: r.y,
+                width: REPO_W,
+                height: REPO_H,
+                borderColor: `${tint}66`,
+                // the agent cards come later in the DOM, so this has to be lifted to open over them
+                zIndex: picker === r.path ? 60 : undefined
+              }}
               onClick={() => setPicker(picker === r.path ? null : r.path)}
               title="click to change this repo's colour"
             >
@@ -87,28 +98,7 @@ export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JS
               <div className="mono truncate text-[12px] font-medium" style={{ color: tint }} title={r.path}>
                 {r.name}
               </div>
-              {picker === r.path && (
-                <div
-                  className="absolute left-0 top-[calc(100%+6px)] z-40 flex gap-1 rounded-md border border-[var(--line)] bg-[var(--panel)] p-1.5 shadow-2xl"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {REPO_COLORS.map((c, i) => (
-                    <button
-                      key={c}
-                      onClick={() => {
-                        setRepoColor(r.path, i)
-                        setPicker(null)
-                      }}
-                      className="h-4 w-4 rounded-full"
-                      style={{
-                        background: c,
-                        outline: i === repoColorIndex(r.path) ? '2px solid var(--fg)' : 'none',
-                        outlineOffset: '1px'
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
+              {picker === r.path && <ColorPicker repoPath={r.path} onClose={() => setPicker(null)} />}
             </div>
           )
         })}
@@ -121,6 +111,7 @@ export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JS
             now={now}
             selected={n.s.id === selected}
             tint={repoColor(n.s.repoPath)}
+            unread={flagged.get(n.s.id) ?? null}
             childCount={n.childCount}
             expanded={expanded.has(n.s.id)}
             onToggle={toggle}
@@ -140,6 +131,7 @@ function SessionCard({
   now,
   selected,
   tint,
+  unread,
   childCount,
   expanded,
   onToggle,
@@ -152,6 +144,8 @@ function SessionCard({
   now: number
   selected: boolean
   tint: string
+  /** flagged and not yet read: 'done' has news, 'waiting' is blocked on you */
+  unread: 'waiting' | 'done' | null
   childCount: number
   expanded: boolean
   onToggle: (id: string) => void
@@ -164,7 +158,7 @@ function SessionCard({
     <div
       className={`card absolute cursor-pointer px-3 py-2 ${tone(s.state)} ${selected ? 'card-selected' : ''} ${
         s.origin === 'subagent' ? 'border-dashed' : ''
-      }`}
+      } ${unread === 'waiting' ? 'card-unread-wait' : unread === 'done' ? 'card-unread' : ''}`}
       style={{ left: x, top: y, width: CARD_W, height: CARD_H }}
       onClick={() => onOpen(s.id)}
       onMouseEnter={() => onSelect(s.id)}

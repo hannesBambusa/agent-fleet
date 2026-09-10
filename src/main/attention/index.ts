@@ -64,6 +64,19 @@ export class Attention extends EventEmitter {
 
   watching(sessionId: string | null): void {
     this.looking = sessionId
+    if (sessionId) this.seen(sessionId)
+  }
+
+  /**
+   * Everything this session was flagged for, cleared because you have now looked at it.
+   *
+   * Opening an agent is the same statement as dismissing its row: you have read what it did. Without
+   * this the card would keep asking for attention it has already had.
+   */
+  seen(sessionId: string): void {
+    const before = this.items.length
+    this.items = this.items.filter((i) => i.sessionId !== sessionId)
+    if (this.items.length !== before) this.emit('update', this.items)
   }
 
   dismiss(id: string): void {
@@ -90,7 +103,7 @@ export class Attention extends EventEmitter {
     if (this.settings.appAgentsOnly && !owned) return
 
     if (s.state === 'waiting' && this.settings.onWaiting) {
-      this.push(s, 'waiting', 'needs your approval')
+      this.push(s, 'waiting')
       return
     }
     // a turn ending: running or waiting, then quiet
@@ -98,33 +111,63 @@ export class Attention extends EventEmitter {
       const ran = Date.now() - (this.startedAt.get(s.id) ?? Date.now())
       this.startedAt.delete(s.id)
       if (ran < WORTH_TELLING_MS) return
-      this.push(s, 'done', 'finished and is waiting for you')
+      this.push(s, 'done')
     }
   }
 
-  private push(s: Session, kind: AttentionItem['kind'], what: string): void {
+  /**
+   * What this turn was about, in a few words.
+   *
+   * A slash command is the best answer when there is one — "/commit finished" says more than any
+   * summary — and the two timestamps say which of the command and the prompt actually started this
+   * turn. Failing both, the first line of what was asked.
+   */
+  private about(s: Session): string {
+    const cmd = s.commands[s.commands.length - 1]
+    const cmdAt = cmd ? Date.parse(cmd.at) : 0
+    const promptAt = s.lastPromptAt ? Date.parse(s.lastPromptAt) : 0
+    if (cmd && cmdAt >= promptAt) return cmd.name
+    return s.lastPrompt?.split('\n')[0]?.slice(0, 80) ?? ''
+  }
+
+  private push(s: Session, kind: AttentionItem['kind']): void {
     const item: AttentionItem = {
       id: `${s.id}-${kind}-${Date.now()}`,
       sessionId: s.id,
       kind,
       repo: s.repo,
+      worktree: s.worktree,
       title: s.topic ?? s.lastPrompt?.split('\n')[0]?.slice(0, 60) ?? s.repo,
+      detail: this.about(s),
       at: new Date().toISOString()
     }
     // one entry per session per kind: an agent that flickers should not fill the queue
     this.items = [item, ...this.items.filter((i) => !(i.sessionId === s.id && i.kind === kind))].slice(0, KEEP)
     this.emit('update', this.items)
-    this.announce(item, what)
+    this.announce(item)
   }
 
-  /** A system notification, unless you are already looking straight at the thing it is about. */
-  private announce(item: AttentionItem, what: string): void {
+  /**
+   * A system notification, unless you are already looking straight at the thing it is about.
+   *
+   * Three lines, because a notification is read at a glance from across the room: which agent, where
+   * it was working, and what it was doing. "backend · done" told you nothing you could act on.
+   */
+  private announce(item: AttentionItem): void {
     const win = BrowserWindow.getAllWindows()[0]
     if (win?.isFocused() && this.looking === item.sessionId) return
     if (!Notification.isSupported()) return
+    const where = item.worktree ? `${item.repo} · ${item.worktree}` : item.repo
     const n = new Notification({
-      title: `${item.repo} · ${item.kind === 'waiting' ? 'needs you' : 'done'}`,
-      body: `${item.title} ${what}`,
+      title: item.title,
+      subtitle: item.kind === 'waiting' ? `${where} — needs your approval` : `${where} — finished`,
+      body: item.detail
+        ? item.kind === 'waiting'
+          ? `waiting during ${item.detail}`
+          : `done with ${item.detail}`
+        : item.kind === 'waiting'
+          ? 'it cannot go further without you'
+          : 'waiting for what to do next',
       silent: !this.settings.sound
     })
     n.on('click', () => {

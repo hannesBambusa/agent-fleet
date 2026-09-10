@@ -10,6 +10,8 @@ import { FleetView } from './fleet/FleetView'
 import { DetailPanel } from './fleet/DetailPanel'
 import { Workspace } from './workspace/Workspace'
 import { LaunchDialog } from './launch/LaunchDialog'
+import { HandoffDialog } from './launch/HandoffDialog'
+import { onHandoff } from './state/handoff'
 import { termSize } from './terminal/Terminal'
 import { useUiScale } from './state/uiScale'
 import { useUsage } from './state/usage'
@@ -48,6 +50,8 @@ function placeholder(a: Agent, ptyAt: number | undefined, said: SessionState | n
     lastCommand: null,
     lastCommandAt: null,
     commands: [],
+    turnEnded: false,
+    note: null,
     lastPrompt: a.prompt || null,
     lastPromptAt: a.createdAt,
     lastEventAt: a.createdAt,
@@ -140,6 +144,10 @@ export default function App(): JSX.Element {
 
   useEffect(() => window.api.attention.onOpen((id) => open(id)), [open])
 
+  // a file handed to an agent somewhere else
+  const [handingOff, setHandingOff] = useState<string | null>(null)
+  useEffect(() => onHandoff(setHandingOff), [])
+
   // a freshly launched agent opens straight into its terminal
   useEffect(() => {
     const fresh = agents.find((a) => a.status === 'starting' && Date.now() - Date.parse(a.createdAt) < 5000)
@@ -169,13 +177,15 @@ export default function App(): JSX.Element {
     const max = Math.max(FLEET_MIN, window.innerWidth / zoom - RIGHT_MIN)
     setFleetWidth(Math.min(max, Math.max(FLEET_MIN, dragFrom.current + delta)))
   }
-  const persistFleet = (): void => {
+  // Every route to a new width is remembered, not only dragging: the divider's double-click toggles
+  // compact, and the rail's own back button expands it, and both were forgotten on restart.
+  useEffect(() => {
     try {
       localStorage.setItem(WIDTH_KEY, String(fleetWidth))
     } catch {
       // storage unavailable
     }
-  }
+  }, [fleetWidth])
 
   // a launched agent with no transcript yet exists only as a placeholder in `sessions`
   const current = sessions.find((s) => s.id === opened) ?? known.find((s) => s.id === opened) ?? null
@@ -239,10 +249,7 @@ export default function App(): JSX.Element {
             setDragging(true)
           }}
           onDrag={dragFleet}
-          onEnd={() => {
-            setDragging(false)
-            persistFleet()
-          }}
+          onEnd={() => setDragging(false)}
           onDoubleClick={() => setFleetWidth(compact ? FLEET_DEFAULT : FLEET_MIN + 40)}
           title="drag to resize · double-click to toggle compact"
         />
@@ -255,6 +262,14 @@ export default function App(): JSX.Element {
         </div>
       </div>
       <LaunchDialog open={launching} onClose={() => setLaunching(false)} onLaunch={(r) => void launch(r)} />
+      {handingOff && (
+        <HandoffDialog
+          path={handingOff}
+          fromRepo={current?.repo ?? hovered?.repo ?? ''}
+          onClose={() => setHandingOff(null)}
+          onLaunch={(r) => void launch(r)}
+        />
+      )}
     </div>
   )
 }

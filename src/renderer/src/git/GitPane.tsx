@@ -540,6 +540,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
         </div>
       )}
 
+      {isWorktree && target === 'worktree' && plan && <LandedBand plan={plan} counts={counts} />}
       {tab === 'changes' && isWorktree && target === 'worktree' && <SeedBand repoPath={repoPath} cwd={cwd} />}
 
       <div className="min-h-0 flex-1">
@@ -672,6 +673,48 @@ function Group({
           </button>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * Where this worktree's work has actually got to.
+ *
+ * Staging and committing happen inside the worktree, and merging happens in the checkout next to it,
+ * so "I staged some files" and "my work is in main" look identical from here. This says which of the
+ * three it is, in one line: still uncommitted, committed but not merged, or in main — and if it is
+ * in main, whether main itself has been pushed anywhere.
+ */
+function LandedBand({
+  plan,
+  counts
+}: {
+  plan: MergePlan
+  counts: { staged: number; unstaged: number; committed: number }
+}): JSX.Element {
+  const loose = counts.staged + counts.unstaged
+  const merged = plan.merged && !loose
+  const tone = merged ? (plan.baseUnpushed ? 'var(--warn)' : 'var(--accent)') : 'var(--muted)'
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] px-3 py-1.5">
+      <span className="mono shrink-0 text-[10px] text-[var(--dim)]">
+        {plan.branch} → {plan.into || '?'}
+      </span>
+      <span className="mono shrink-0 text-[11px]" style={{ color: tone }}>
+        {merged ? '✓ in ' + plan.into : plan.commits ? `${plan.commits} commit(s) not in ${plan.into}` : 'nothing committed yet'}
+      </span>
+      {!!loose && (
+        <span className="mono shrink-0 text-[10px] text-[var(--muted)]">
+          · {loose} uncommitted file(s) {plan.merged ? 'since then' : 'here'}
+        </span>
+      )}
+      {merged && (
+        <span className="mono ml-auto shrink-0 text-[10px]" style={{ color: plan.baseUnpushed ? 'var(--warn)' : 'var(--dim)' }}>
+          {plan.baseUnpushed
+            ? `${plan.into} is ${plan.baseUnpushed} ahead of origin — still to push`
+            : `${plan.into} matches origin`}
+        </span>
+      )}
     </div>
   )
 }

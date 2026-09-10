@@ -4,6 +4,7 @@ import { MonacoViewer } from './MonacoViewer'
 import { Divider } from '../lib/Divider'
 import { usePersisted } from '../state/persist'
 import { onOpenFile } from '../state/openFile'
+import { handoff } from '../state/handoff'
 
 const TREE_MIN = 150
 const TREE_MAX = 420
@@ -202,6 +203,19 @@ function Viewer({
           {path.split('/').pop()}
         </span>
         {file && !file.binary && <span className="lbl shrink-0">{lines} lines</span>}
+        {/* the one action on a file that starts work, so it looks like a button rather than a label */}
+        <button
+          onClick={() => handoff(path)}
+          title="start an agent in another repo with this file as its brief"
+          className="flex shrink-0 items-center gap-1 rounded px-2 py-[3px] text-[10.5px] font-medium transition-colors"
+          style={{
+            background: 'var(--accent-soft)',
+            color: 'var(--accent)',
+            border: '1px solid color-mix(in srgb, var(--accent) 45%, transparent)'
+          }}
+        >
+          hand off to an agent →
+        </button>
         <button onClick={() => void window.api.shell.openPath(path)} className="lbl shrink-0 hover:!text-[var(--accent)]">
           open outside
         </button>

@@ -43,6 +43,12 @@ export interface SessionCommand {
   at: string
 }
 
+/** A name and a description someone typed for a session, which beat anything derived. */
+export interface SessionLabel {
+  name: string
+  note: string
+}
+
 export interface Session {
   id: string
   // set by the renderer: launched from this app, or picked up from a terminal
@@ -67,6 +73,10 @@ export interface Session {
   lastCommandAt: string | null
   /** every slash command sent to this session, oldest first: the shape of how it was worked */
   commands: SessionCommand[]
+  /** the last assistant message said the turn was over, rather than continuing into a tool call */
+  turnEnded: boolean
+  /** what this session is about, in the user's own words */
+  note: string | null
   lastPrompt: string | null
   lastPromptAt: string | null
   lastEventAt: string | null
@@ -138,6 +148,8 @@ export interface Agent {
   seeded?: string[]
   /** the user typed this name; otherwise it is only a worktree directory and Claude Code titles itself */
   titled?: boolean
+  /** a handed-over document waiting to be copied in once the working directory exists */
+  handoff?: string
   createdAt: string
 }
 
@@ -150,6 +162,8 @@ export interface LaunchRequest {
   chat: boolean
   detached: boolean
   resumeSessionId?: string
+  /** a document to copy into the new agent's own directory, for a handoff too long to paste */
+  handoff?: string
 }
 
 export interface BrowserState {
@@ -269,6 +283,10 @@ export interface MergePlan {
   commits: number
   files: number
   fastForward: boolean
+  /** every commit of this branch is already in the base branch */
+  merged: boolean
+  /** commits sitting in the base branch that no remote has yet */
+  baseUnpushed: number
   /** the checkout the merge would run in, which is where the target branch lives */
   at: string | null
 }
@@ -433,7 +451,11 @@ export interface AttentionItem {
   sessionId: string
   kind: 'waiting' | 'done'
   repo: string
+  /** the worktree it was working in, when it had one of its own */
+  worktree: string | null
   title: string
+  /** what it was doing: the slash command that started the turn, or the prompt that did */
+  detail: string
   at: string
 }
 
@@ -443,4 +465,25 @@ export interface AttentionSettings {
   /** ignore sessions started in a terminal, which you are probably already watching */
   appAgentsOnly: boolean
   sound: boolean
+}
+
+/** What removing an agent for good would delete, counted before anything is touched. */
+export interface PurgePlan {
+  agentId: string
+  sessionId: string
+  transcripts: Array<{ path: string; bytes: number }>
+  worktree: {
+    path: string
+    name: string
+    branch: string | null
+    /** uncommitted files, which removing the worktree throws away */
+    dirty: number
+    /** commits that are on no remote: the only part that cannot be got back */
+    unpushed: number
+  } | null
+}
+
+export interface PurgeResult {
+  done: string[]
+  failed: string[]
 }

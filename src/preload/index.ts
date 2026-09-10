@@ -22,10 +22,13 @@ import type {
   HookStatus,
   LaunchRequest,
   McpServer,
+  PurgePlan,
+  PurgeResult,
   Repo,
   SeedItem,
   SeedPlan,
   Session,
+  SessionLabel,
   UsageSnapshot
 } from '../shared/types'
 function on<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
@@ -49,7 +52,13 @@ const api = {
   // every Claude Code session on the machine, watched
   sessions: {
     listSessions: (): Promise<Session[]> => ipcRenderer.invoke('sessions:list'),
-    onSessionUpdate: (cb: (s: Session) => void) => on<[Session]>('sessions:update', cb)
+    onSessionUpdate: (cb: (s: Session) => void) => on<[Session]>('sessions:update', cb),
+    // a session whose transcript the app has just deleted, so the card can go at once
+    onSessionGone: (cb: (id: string) => void) => on<[string]>('sessions:gone', cb),
+    // a name and a description someone typed, which beat anything the app can derive
+    label: (sessionId: string): Promise<SessionLabel | null> => ipcRenderer.invoke('sessions:label', sessionId),
+    setLabel: (sessionId: string, label: SessionLabel): Promise<SessionLabel | null> =>
+      ipcRenderer.invoke('sessions:setLabel', sessionId, label)
   },
 
   // the local receiver and the settings it installs itself into
@@ -73,6 +82,7 @@ const api = {
     setPrefs: (p: Partial<AttentionSettings>): Promise<AttentionSettings> =>
       ipcRenderer.invoke('attention:setPrefs', p),
     dismiss: (id: string): Promise<void> => ipcRenderer.invoke('attention:dismiss', id),
+    seen: (sessionId: string): Promise<void> => ipcRenderer.invoke('attention:seen', sessionId),
     clear: (): Promise<void> => ipcRenderer.invoke('attention:clear'),
     watching: (sessionId: string | null): void => ipcRenderer.send('attention:watching', sessionId),
     onUpdate: (cb: (items: AttentionItem[]) => void) => on<[AttentionItem[]]>('attention:update', cb),
@@ -97,7 +107,11 @@ const api = {
     stopAgent: (id: string): Promise<void> => ipcRenderer.invoke('agents:stop', id),
     removeAgent: (id: string): Promise<void> => ipcRenderer.invoke('agents:remove', id),
     onUpdate: (cb: (a: Agent) => void) => on<[Agent]>('agents:update', cb),
-    onRemoved: (cb: (id: string) => void) => on<[string]>('agents:removed', cb)
+    onRemoved: (cb: (id: string) => void) => on<[string]>('agents:removed', cb),
+    // what removing this agent for good would delete, and doing it
+    purgePlan: (id: string): Promise<PurgePlan | null> => ipcRenderer.invoke('agents:purgePlan', id),
+    purge: (id: string, opts: { worktree: boolean; branch: boolean; transcript: boolean }): Promise<PurgeResult> =>
+      ipcRenderer.invoke('agents:purge', id, opts)
   },
 
   // the terminal behind an agent

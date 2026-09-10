@@ -34,11 +34,13 @@ import {
 import { usage } from './usage'
 import { catalog } from './catalog'
 import { Attention } from './attention'
+import { purge, purgePlan } from './agents/purge'
+import { labelFor, setLabel } from './sessions/labels'
 import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
 import { listDir, readTextFile } from './files/browse'
 import { seedApply, seedPlan } from './git/seed'
-import type { Agent, AttentionSettings, LaunchRequest, Repo, SeedItem, Session } from '../shared/types'
+import type { Agent, AttentionSettings, LaunchRequest, Repo, SeedItem, Session, SessionLabel } from '../shared/types'
 
 // same data folder whether started via pnpm dev, a direct electron run, or the packaged app
 app.setName('agent-fleet')
@@ -126,10 +128,33 @@ function wireIpc(): void {
   ipcMain.handle('hooks:install', () => installHooks())
   ipcMain.handle('hooks:uninstall', () => uninstallHooks())
 
+  ipcMain.handle('sessions:label', (_, sessionId: string) => labelFor(sessionId))
+  ipcMain.handle('sessions:setLabel', (_, sessionId: string, label: SessionLabel) => {
+    const saved = setLabel(sessionId, label)
+    tailer.relabel(sessionId)
+    return saved
+  })
+  ipcMain.handle('agents:purgePlan', async (_, id: string) => {
+    const a = agents.get(id)
+    return a ? purgePlan(a, tailer.filesOf(a.sessionId)) : null
+  })
+  ipcMain.handle(
+    'agents:purge',
+    async (_, id: string, opts: { worktree: boolean; branch: boolean; transcript: boolean }) => {
+      const a = agents.get(id)
+      if (!a) return { done: [], failed: ['that agent is already gone'] }
+      const files = tailer.filesOf(a.sessionId)
+      const result = await purge(a, files, opts)
+      if (opts.transcript) tailer.forget(a.sessionId)
+      agents.remove(id)
+      return result
+    }
+  )
   ipcMain.handle('attention:list', () => attention.list())
   ipcMain.handle('attention:prefs', () => attention.prefs())
   ipcMain.handle('attention:setPrefs', (_, p: Partial<AttentionSettings>) => attention.setPrefs(p))
   ipcMain.handle('attention:dismiss', (_, id: string) => attention.dismiss(id))
+  ipcMain.handle('attention:seen', (_, sessionId: string) => attention.seen(sessionId))
   ipcMain.handle('attention:clear', () => attention.clear())
   // the renderer says what is on screen, so the app does not announce what you are looking at
   ipcMain.on('attention:watching', (_, sessionId: string | null) => attention.watching(sessionId))
@@ -215,7 +240,33 @@ function wireIpc(): void {
   )
 }
 
+/**
+ * One instance, or none.
+ *
+ * Two copies fight over more than the two local ports: they share `agents.json`, and the second one
+ * rewrites the first one's records on load, which reads as agents mysteriously going dead. The
+ * second launch hands its focus to the window that already exists and quits.
+ *
+ * Two copies are still possible on purpose — with AGENT_FLEET_HOOK_PORT and
+ * AGENT_FLEET_BROWSER_PORT set, which is how a dev build runs beside the packaged one.
+ */
+const alone = process.env['AGENT_FLEET_HOOK_PORT'] ? true : app.requestSingleInstanceLock()
+if (!alone) {
+  console.log('[app] another agent-fleet is already running; focusing it instead')
+  app.quit()
+}
+
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+})
+
 void app.whenReady().then(() => {
+  // the second copy has already asked the first to show itself; it has nothing else to do
+  if (!alone) return
   electronApp.setAppUserModelId('se.bambusa.agent-fleet')
   // A packaged app carries its icon in the bundle. In development Electron shows its own, which
   // makes the dev window hard to pick out of a Dock that already has the real app in it.
@@ -231,6 +282,8 @@ void app.whenReady().then(() => {
   attention.on('open', (sessionId: string) => broadcast('attention:open', sessionId))
   browser = new BrowserManager(() => BrowserWindow.getAllWindows()[0] ?? null)
   wireIpc()
+
+  tailer.on('gone', (id: string) => broadcast('sessions:gone', id))
 
   tailer.on('update', (s: Session) => {
     if (!s.parentId) repos.seen(s.cwd)

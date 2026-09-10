@@ -55,7 +55,16 @@ export function startHookServer(tailer: Tailer, onEvent?: (e: HookEvent) => void
       })
     })
   })
-  server.on('error', (err) => console.error('[hooks] listener failed', err))
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `[hooks] port ${HOOK_PORT} is taken, so hook events will not arrive. Another agent-fleet is ` +
+          `probably running; quit it, or start this one with AGENT_FLEET_HOOK_PORT set to something else.`
+      )
+      return
+    }
+    console.error('[hooks] listener failed', err)
+  })
   server.listen(HOOK_PORT, '127.0.0.1')
   return server
 }

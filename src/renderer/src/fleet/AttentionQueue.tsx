@@ -110,7 +110,9 @@ export function AttentionQueue({ onOpen }: { onOpen: (sessionId: string) => void
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[11.5px]">{i.title}</span>
                   <span className="mono block truncate text-[9.5px] text-[var(--dim)]">
-                    {i.repo} · {i.kind === 'waiting' ? 'wants approval' : 'finished'}
+                    {i.worktree ? `${i.repo} · ${i.worktree}` : i.repo} ·{' '}
+                    {i.kind === 'waiting' ? 'wants approval' : 'finished'}
+                    {i.detail ? ` · ${i.detail}` : ''}
                   </span>
                 </span>
                 <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{age(i.at, now)}</span>

@@ -194,6 +194,7 @@ function applyUser(s: Session, d: Line, id: string, ts: string): boolean {
     s.lastCommandAt = ts
     // Commands are the spine of how a session was worked: /git-add, /preflight, /commit. They are
     // rare enough to keep all of them, unlike the transcript, which is a ring and forgets.
+    s.turnEnded = false
     s.commands.push({ name: s.lastCommand, at: ts })
     if (s.commands.length > 300) s.commands.shift()
     s.turns += 1
@@ -202,6 +203,7 @@ function applyUser(s: Session, d: Line, id: string, ts: string): boolean {
   }
   // system-injected turns (task notifications, local command output) are not prompts
   if (!text || text.trimStart().startsWith('<')) return false
+  s.turnEnded = false
   s.lastPrompt = text.slice(0, 500)
   s.lastPromptAt = ts
   s.turns += 1
@@ -209,8 +211,14 @@ function applyUser(s: Session, d: Line, id: string, ts: string): boolean {
   return true
 }
 
+// What an assistant message says about the turn: anything but `tool_use` means it is finished.
+// Claude Code writes this on every message, and it is the only exact end-of-turn marker in the
+// transcript — everything else is inference from how long ago something was written.
+const ENDED = new Set(['end_turn', 'stop_sequence', 'max_tokens'])
+
 function applyAssistant(s: Session, d: Line, id: string, ts: string): boolean {
   const m = d.message
+  if (typeof m?.stop_reason === 'string') s.turnEnded = ENDED.has(m.stop_reason)
   if (m?.model) s.model = m.model
   if (m?.usage) {
     s.tokens.input += m.usage.input_tokens ?? 0
