@@ -58,6 +58,23 @@ test('built-ins are offered even though no file defines them', () => {
   assert.ok(list.some((i) => i.token === 'clear' && i.source === 'built-in'))
 })
 
+test('what a session said its built-ins are replaces the list that was guessed', () => {
+  const probed = item({ name: 'mcp', description: 'Manage MCP servers', source: 'built-in', origin: 'Claude Code', path: '' })
+  const list = slashItems([probed])
+  assert.deepEqual(
+    list.map((i) => i.token),
+    ['mcp'],
+    'the hand written names are gone: a guess does not get to pad a real answer'
+  )
+  assert.equal(list[0].description, 'Manage MCP servers')
+  assert.equal(list[0].source, 'built-in')
+})
+
+test('a discovered built-in is offered once, not again as an ordinary catalog entry', () => {
+  const probed = item({ name: 'mcp', source: 'built-in', origin: 'Claude Code', path: '' })
+  assert.equal(slashItems([probed]).filter((i) => i.token === 'mcp').length, 1)
+})
+
 test('one entry per token when a skill and a command share a name', () => {
   const list = slashItems([item({ name: 'commit' }), item({ kind: 'skill', name: 'commit' })])
   assert.equal(list.filter((i) => i.token === 'commit').length, 1)

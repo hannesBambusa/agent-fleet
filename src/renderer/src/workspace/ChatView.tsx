@@ -105,10 +105,13 @@ export function ChatView({
   )
   const box = useRef<HTMLDivElement>(null)
   const [stick, setStick] = useState(true)
+  // a command surface grows in place rather than by arriving, so it says when it has, or its
+  // choices end up drawn below the fold and the menu reads as having none
+  const [grew, setGrew] = useState(0)
   useEffect(() => {
     const el = box.current
     if (el && stick) el.scrollTop = el.scrollHeight
-  }, [turns, pending, runs, stick])
+  }, [turns, pending, runs, grew, stick])
 
   const live = !!agent && agent.status !== 'exited'
   // an agent that died before writing anything left its reason in the terminal, nowhere else
@@ -327,6 +330,7 @@ export function ChatView({
                     before={r.before}
                     onOpenTerminal={onOpenTerminal}
                     onGone={() => setRuns((list) => list.filter((x) => x.id !== r.id))}
+                    onGrow={() => setGrew((n) => n + 1)}
                   />
                 )
               }))

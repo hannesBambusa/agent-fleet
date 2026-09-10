@@ -267,7 +267,9 @@ export interface Options {
   options: string[]
   /** which one the TUI has highlighted, so a choice knows how far to walk */
   cursor: number
-  /** the row the last option sits on, which is where the text above it stops */
+  /** the row the first option sits on, which is where the text above it stops */
+  first: number
+  /** the row the last option sits on */
   at: number
   /**
    * whether the highlight was actually seen.
@@ -288,6 +290,7 @@ export interface Options {
 export function readOptions(lines: string[]): Options | null {
   const options: string[] = []
   let cursor = 0
+  let first = -1
   let at = -1
   let marked = false
   for (let i = 0; i < lines.length; i++) {
@@ -298,6 +301,7 @@ export function readOptions(lines: string[]): Options | null {
       options.length = 0
       cursor = 0
       marked = false
+      first = i
     }
     if (index !== options.length + 1) continue
     if (m[1]) {
@@ -307,31 +311,82 @@ export function readOptions(lines: string[]): Options | null {
     options.push(m[3].replace(/\s*\(esc\)\s*$/i, ''))
     at = i
   }
-  if (options.length >= 2 && at !== -1) return { options, cursor, at, marked }
+  if (options.length >= 2 && at !== -1) return { options, cursor, first, at, marked }
   return bareSelect(lines)
 }
 
 /**
- * Some menus, the workspace trust dialog among them, list their choices without numbers. They are
- * recognised by the highlight marker plus a short run of terse rows under it.
+ * A row that closes a menu rather than belonging to it: the key hints and the help link every
+ * Claude Code menu prints under its choices. Matched on shape where possible, since the wording is
+ * the CLI's and could be translated.
  */
-function bareSelect(lines: string[]): Options | null {
-  const marker = lines.map((l, i) => ({ l, i })).filter(({ l }) => /^❯\s+\S/.test(l)).pop()
-  if (!marker) return null
-  const terse = (l: string): boolean => !!l && l.length < 70 && !/[.:]$/.test(l)
-  const options = [marker.l.replace(/^❯\s+/, '')]
-  let at = marker.i
-  for (let i = marker.i + 1; i < lines.length && options.length < 5; i++) {
-    const line = lines[i].trim()
-    if (!line || !terse(line)) break
-    options.push(line)
-    at = i
-  }
-  return options.length >= 2 ? { options, cursor: 0, at, marked: true } : null
+function menuFooter(l: string): boolean {
+  if (/^https?:\/\//i.test(l)) return true
+  if (l.includes('↑') && l.includes('↓')) return true
+  return /\besc\b/i.test(l) && /\benter\b/i.test(l)
 }
 
-// the composer is a boxed input, and the rules that draw it are where the conversation stops
-const RULE = /^[─━—=_-]{8,}$/
+/** the first row of the unbroken run of text that `i` sits in */
+function groupTop(rows: string[], i: number): number {
+  let top = i
+  while (top > 0 && rows[top - 1]) top--
+  return top
+}
+
+/**
+ * Some menus list their choices without numbers, so the highlight is the only thing marking them.
+ *
+ * A blank line inside such a menu is a group separator, not the end of it. `/mcp` prints six
+ * servers under two headings, and stopping at the first gap offered three of them, so the last
+ * three could not be picked at all. The choices therefore run from the marker's own group down
+ * through every group after it, as far as the footer.
+ *
+ * Telling a heading from a choice is the weak point, because the screen model has already thrown
+ * the indentation away. The rule is positional and inferred from a single real `/mcp` capture:
+ * when a menu has more than one group, the first row of each group is that group's heading. A
+ * single-group menu keeps the older, narrower reading, choices from the marker downwards, so every
+ * shape that already worked is untouched. What makes this safe to act on is not the rule but
+ * `SlashRun`, which moves the highlight and checks where it landed before pressing return.
+ */
+function bareSelect(lines: string[]): Options | null {
+  const rows = lines.map((l) => l.trim())
+  const marker = rows.map((l, i) => ({ l, i })).filter(({ l }) => /^❯\s+\S/.test(l)).pop()
+  if (!marker) return null
+  const terse = (l: string): boolean => l.length < 90 && !/[.:]$/.test(l)
+
+  const groups: number[][] = []
+  let group: number[] = []
+  for (let i = groupTop(rows, marker.i); i < rows.length; i++) {
+    const l = rows[i]
+    if (!l) {
+      if (group.length) groups.push(group)
+      group = []
+      // one blank separates two groups of choices, two of them end the menu
+      if (!rows[i + 1]) break
+      continue
+    }
+    if (RULE.test(l) || menuFooter(l) || !terse(l)) break
+    group.push(i)
+  }
+  if (group.length) groups.push(group)
+
+  const picks =
+    groups.length > 1 ? groups.flatMap((g) => g.slice(1)) : (groups[0] ?? []).filter((i) => i >= marker.i)
+  const cursor = picks.indexOf(marker.i)
+  if (picks.length < 2 || cursor < 0) return null
+  return {
+    options: picks.map((i) => rows[i].replace(/^❯\s+/, '')),
+    cursor,
+    first: picks[0],
+    at: picks[picks.length - 1],
+    marked: true
+  }
+}
+
+// The composer is a boxed input, and the rules that draw it are where the conversation stops. The
+// eighth-block glyphs are in here because a menu draws its own top edge with `▔`, not with the `─`
+// the composer uses, and that edge is the only honest boundary above a menu that has no echo.
+const RULE = /^[─━—▔▁=_-]{8,}$/
 
 /**
  * The row where the conversation area ends, which is the top rule of the composer box.
@@ -388,6 +443,26 @@ export interface Run {
 const blankish = (l: string): boolean => !l.trim() || RULE.test(l.trim())
 
 /**
+ * Where the block a menu sits in starts, for a menu the terminal never echoed a command above.
+ *
+ * This used to be a fixed number of rows above the first choice, which on a full screen simply
+ * landed in the middle of the conversation: `/mcp` showed two sentences of an earlier answer and a
+ * spinner line as if they were its output. A menu draws its own top edge, so the nearest rule above
+ * the choices is the real boundary, and a gap of two blank rows is the fallback when there is none.
+ */
+function blockTop(rows: string[], first: number): number {
+  let blanks = 0
+  for (let i = first - 1; i >= 0; i--) {
+    const l = rows[i].trim()
+    if (RULE.test(l)) return i + 1
+    if (!l) {
+      if (++blanks >= 2) return i + 2
+    } else blanks = 0
+  }
+  return 0
+}
+
+/**
  * What the terminal is showing for one slash command, read off the screen.
  *
  * `skip` is how many echoes of the same command were already on screen when it was sent, so a
@@ -408,7 +483,7 @@ export function readRun(lines: string[], command: string, skip: number): Run | n
     if (options && options.at >= next) options = null
   }
   // with no echo to start from, show the block the menu sits in rather than the whole screen
-  const from = start >= 0 ? start : options ? Math.max(0, options.at - options.options.length - 8) : 0
+  const from = start >= 0 ? start : options ? blockTop(rows, options.first) : 0
   const body = rows.slice(from, Math.max(from, end))
   while (body.length && blankish(body[0])) body.shift()
   while (body.length && blankish(body[body.length - 1])) body.pop()

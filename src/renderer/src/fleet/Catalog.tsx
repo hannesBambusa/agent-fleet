@@ -6,7 +6,8 @@ import { openFile } from '../state/openFile'
 const SOURCE_TONE: Record<CatalogItem['source'], { label: string; color: string }> = {
   user: { label: 'global', color: 'var(--accent)' },
   plugin: { label: 'plugin', color: 'var(--sub)' },
-  project: { label: 'project', color: 'var(--warn)' }
+  project: { label: 'project', color: 'var(--warn)' },
+  'built-in': { label: 'built-in', color: 'var(--code-fn)' }
 }
 
 /**
@@ -35,7 +36,9 @@ export function Catalog({ kind }: { kind: CatalogKind }): JSX.Element {
   }, [kind])
 
   const list = useMemo(() => {
-    const mine = (all ?? []).filter((i) => i.kind === kind)
+    // Claude Code's own commands are in the catalog for the slash menu's sake. This view is about
+    // what is written on this machine, and every card here offers to open its file.
+    const mine = (all ?? []).filter((i) => i.kind === kind && i.source !== 'built-in')
     const needle = q.trim().toLowerCase()
     if (!needle) return mine
     return mine.filter((i) => `${i.name} ${i.description} ${i.origin}`.toLowerCase().includes(needle))

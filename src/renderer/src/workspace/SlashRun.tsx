@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Screen, clean, contentDepth, delta, echoRows, readRun, renderScreen, walk, type Run } from './screen'
+import { Screen, clean, contentDepth, delta, echoRows, readRun, renderScreen, walk, type Run } from '../../../shared/screen'
 
 const POLL_MS = 700
 // how long the screen has to hold still before a command counts as finished
 const SETTLE_MS = 1_500
 // nothing recognisable after this long means the command left no trace the chat can read
 const GRACE_MS = 8_000
+// how long the highlight is given to arrive where it was aimed before the pick is abandoned
+const AIM_MS = 2_500
 
 /**
  * What the terminal is showing for one slash command, in the chat.
@@ -28,7 +30,8 @@ export function SlashRunCard({
   command,
   before,
   onOpenTerminal,
-  onGone
+  onGone,
+  onGrow
 }: {
   agentId: string
   command: string
@@ -37,14 +40,29 @@ export function SlashRunCard({
   onOpenTerminal: () => void
   /** the command took content away rather than adding any, so there is nothing to leave behind */
   onGone: () => void
+  /**
+   * the card is about to be a different height.
+   *
+   * It starts as one quiet line and can become twenty rows of output plus a row of choices, and
+   * the chat only pins itself to the bottom when its list of items changes. Without this the
+   * choices for a long menu are drawn below the fold and read as a menu with no choices at all.
+   */
+  onGrow: () => void
 }): JSX.Element | null {
   const [run, setRun] = useState<Run | null>(null)
   const [lost, setLost] = useState(false)
   const [sent, setSent] = useState(false)
-  // the highlight the keystrokes are counted from, which the next redraw replaces
-  const cursor = useRef(0)
+  const [missed, setMissed] = useState<string | null>(null)
+  // A pick in flight: the arrow keys have gone in and return has not, because which row the
+  // highlight actually landed on is read back off the screen first. Reading a menu means guessing
+  // which rows are choices and which are group headings, and a guess one row out would confirm a
+  // different server than the one that was clicked. Aiming is reversible; return is not.
+  const aim = useRef<{ index: number; label: string; at: number } | null>(null)
+  const poke = useRef<() => void>(() => {})
   const gone = useRef(onGone)
   gone.current = onGone
+  const grew = useRef(onGrow)
+  grew.current = onGrow
 
   useEffect(() => {
     let alive = true
@@ -62,6 +80,28 @@ export function SlashRunCard({
       timer = null
     }
 
+    /**
+     * Press return, but only once the highlight is provably on the row that was clicked.
+     *
+     * If it is somewhere else the pick is dropped rather than confirmed, which leaves the menu open
+     * and the user a terminal to finish it in. A wrong confirmation could not be taken back.
+     */
+    const press = (now: Run | null): void => {
+      const a = aim.current
+      if (!a) return
+      const on = now?.options
+      if (on?.marked && on.cursor === a.index && on.options[a.index] === a.label) {
+        aim.current = null
+        window.api.pty.write(agentId, '\r')
+        setSent(true)
+        setMissed(null)
+        return
+      }
+      if (Date.now() - a.at < AIM_MS) return
+      aim.current = null
+      setMissed(a.label)
+    }
+
     const tick = async (): Promise<void> => {
       const h = await window.api.pty.history(agentId)
       if (!alive) return
@@ -74,10 +114,11 @@ export function SlashRunCard({
       if (now !== shape) {
         shape = now
         stillSince = Date.now()
-        cursor.current = next?.options?.cursor ?? 0
         setRun(next)
         setSent(false)
+        grew.current()
       }
+      if (aim.current) press(next)
       // A menu sitting open is settled too, so silence on its own can never mean finished: the
       // options have to be gone before the card stops following. Picking one usually redraws into
       // another menu, and this is what keeps it following through that. It has to be a highlighted
@@ -116,16 +157,24 @@ export function SlashRunCard({
       void tick()
       timer = setInterval(() => void tick(), POLL_MS)
     })
+    // a pick needs an answer sooner than the next poll, so it can ask for one
+    poke.current = () => void tick()
     return () => {
       alive = false
+      poke.current = () => {}
       stop()
     }
   }, [agentId, command, before])
 
   function choose(index: number): void {
-    for (const key of walk(cursor.current, index)) window.api.pty.write(agentId, key)
-    setTimeout(() => window.api.pty.write(agentId, '\r'), 40)
-    setSent(true)
+    const options = run?.options
+    if (!options || aim.current) return
+    setMissed(null)
+    for (const key of walk(options.cursor, index)) window.api.pty.write(agentId, key)
+    aim.current = { index, label: options.options[index], at: Date.now() }
+    // the TUI needs a moment to redraw the highlight before there is anything to read back
+    setTimeout(() => poke.current(), 120)
+    setTimeout(() => poke.current(), 400)
   }
 
   const label = (
@@ -177,7 +226,10 @@ export function SlashRunCard({
         </pre>
       )}
       {pickable && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {/* the body above already lists these; without a word here the row of pills reads as
+              part of the output rather than as the thing to press */}
+          <span className="lbl mr-0.5">pick one</span>
           {pickable.options.map((o, i) => (
             <button
               key={i}
@@ -195,6 +247,11 @@ export function SlashRunCard({
         </div>
       )}
       {sent && <div className="mt-1.5 text-[10.5px] text-[var(--dim)]">sent · if nothing happens, answer it in the terminal</div>}
+      {missed && (
+        <div className="mt-1.5 text-[10.5px] text-[var(--warn)]">
+          the highlight did not land on {missed}, so nothing was confirmed · pick it in the terminal
+        </div>
+      )}
       {!run.anchored && (
         <div className="mt-1.5 text-[10.5px] text-[var(--dim)]">
           the terminal never echoed {command}, so this is what its screen shows rather than a reply to it

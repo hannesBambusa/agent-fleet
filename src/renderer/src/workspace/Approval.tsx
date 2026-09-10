@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Screen, clean, delta, readOptions, walk } from './screen'
+import { Screen, clean, delta, readOptions, walk } from '../../../shared/screen'
 
 interface Prompt {
   question: string
@@ -21,13 +21,13 @@ export function readPrompt(lines: string[]): Prompt | null {
   const tail = lines.map(clean).slice(-60)
   const found = readOptions(tail)
   if (!found) return null
-  const { options, cursor, at } = found
+  const { options, cursor, first } = found
 
   const rule = (l: string): boolean => !l.trim() || /^[─—=_·.\s]+$/.test(l.trim())
   // The question is whatever sits above the choices, back to the top of the box it is drawn in.
   // Without that bound the lookback runs off the top of the box and into the conversation, and
   // quotes an older message that happened to end in a question mark.
-  const top = Math.max(0, at - options.length)
+  const top = Math.max(0, first - 1)
   let from = Math.max(0, top - 8)
   for (let i = top; i >= from; i--) {
     if (rule(tail[i])) {

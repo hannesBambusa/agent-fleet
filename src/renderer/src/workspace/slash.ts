@@ -10,7 +10,10 @@ export interface SlashItem {
   kind: 'command' | 'skill'
 }
 
-// the ones Claude Code ships; they are the most used and appear in no catalog file
+// The ones Claude Code ships, until a session has been asked what they really are. This list is a
+// guess written from what this machine's transcripts show being used, and it was wrong in the way a
+// guess is wrong: `/mcp`, the most used command of all, was missing from it. It stands only while
+// the catalog carries no discovered built-ins, so that a failed probe never means an empty menu.
 const BUILT_IN: Array<[string, string]> = [
   ['clear', 'Start a fresh conversation, forgetting this one'],
   ['compact', 'Summarise the conversation so far and continue with less context'],
@@ -42,20 +45,31 @@ export const TONE: Record<SlashItem['source'], string> = {
  * Everything typable after a slash, from the same files Claude Code reads.
  *
  * A plugin command is namespaced (`caveman:caveman-commit`), a project or user command is its
- * filename, and a skill is invocable by its own name too. Built-ins come from the list above, since
- * they exist in no file to scan.
+ * filename, and a skill is invocable by its own name too. Built-ins exist in no file to scan, so
+ * they reach the catalog by having been read off a live session's own menu; the hand written list
+ * covers the window before that has happened once.
  */
 export function slashItems(catalog: CatalogItem[]): SlashItem[] {
-  const out: SlashItem[] = BUILT_IN.map(([token, description]) => ({
-    token,
-    description,
-    hint: null,
-    source: 'built-in' as const,
-    origin: 'Claude Code',
-    kind: 'command' as const
-  }))
+  const discovered = catalog.filter((i) => i.source === 'built-in')
+  const out: SlashItem[] = discovered.length
+    ? discovered.map((i) => ({
+        token: i.name,
+        description: i.description,
+        hint: i.hint,
+        source: 'built-in' as const,
+        origin: i.origin,
+        kind: 'command' as const
+      }))
+    : BUILT_IN.map(([token, description]) => ({
+        token,
+        description,
+        hint: null,
+        source: 'built-in' as const,
+        origin: 'Claude Code',
+        kind: 'command' as const
+      }))
   for (const i of catalog) {
-    if (i.kind === 'agent') continue
+    if (i.kind === 'agent' || i.source === 'built-in') continue
     const source = i.source === 'user' ? 'global' : i.source
     const token = i.source === 'plugin' ? `${i.origin}:${i.name}` : i.name
     out.push({

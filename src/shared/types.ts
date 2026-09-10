@@ -376,10 +376,11 @@ export interface CatalogItem {
   kind: CatalogKind
   name: string
   description: string
-  /** your own config, a plugin, or a project's */
-  source: 'user' | 'plugin' | 'project'
+  /** your own config, a plugin, a project's, or Claude Code's own */
+  source: 'user' | 'plugin' | 'project' | 'built-in'
   /** the plugin or project it belongs to */
   origin: string
+  /** empty for a built-in, which was read off a session's own menu rather than out of a file */
   path: string
   model: string | null
   tools: string | null

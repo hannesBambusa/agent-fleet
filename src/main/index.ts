@@ -33,6 +33,7 @@ import {
 } from './git'
 import { usage } from './usage'
 import { catalog } from './catalog'
+import { builtinItems, probeBuiltins, readCache } from './catalog/builtins'
 import { Attention } from './attention'
 import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
@@ -104,6 +105,56 @@ function broadcast(channel: string, ...payload: unknown[]): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, ...payload)
 }
 
+const BUILTINS = (): string => join(app.getPath('userData'), 'claude-builtins.json')
+
+/** the Claude Code version the machine is on, from the most recent transcript that recorded one */
+function claudeVersion(): string | null {
+  return (
+    tailer
+      .list()
+      .filter((s) => s.version)
+      .sort((a, b) => (b.lastEventAt ?? '').localeCompare(a.lastEventAt ?? ''))[0]?.version ?? null
+  )
+}
+
+// one probe at a time, and a handful per run at most: one that keeps failing is one whose reading
+// of the screen is wrong, and every attempt costs keystrokes in a session somebody is watching
+let probing = false
+let probes = 0
+
+/**
+ * Ask Claude Code what its own slash commands are, at the one moment typing into a session is safe.
+ *
+ * A launch with no prompt has nothing in flight, and its pty was created a moment ago by this
+ * process, so there is no draft in it that main cannot see. Every other moment belongs to the user:
+ * a resumed session is mid-conversation, a prompted one is already working, and a detached one is
+ * behind a tmux client. Nothing happens once the cache holds this machine's current version, and
+ * the probe itself stops before typing if the banner says it already knows this one.
+ */
+function maybeProbeBuiltins(req: LaunchRequest, a: Agent): void {
+  if (req.prompt.trim() || req.detached || req.resumeSessionId) return
+  if (probing || probes >= 3) return
+  const have = readCache(BUILTINS())
+  const version = claudeVersion()
+  if (have && (!version || version === have.version)) return
+  probing = true
+  probes++
+  void probeBuiltins(ptys, a.id, BUILTINS(), knownTokens).finally(() => {
+    probing = false
+  })
+}
+
+/** every command and skill a file accounts for, in both spellings the menu can show one under */
+function knownTokens(): Set<string> {
+  const out = new Set<string>()
+  for (const i of catalog(repos.list().map((r) => r.path))) {
+    if (i.kind === 'agent') continue
+    out.add(i.name)
+    out.add(`${i.origin}:${i.name}`)
+  }
+  return out
+}
+
 /**
  * Resume the conversation this agent is actually on, not the id it was launched with. Claude Code
  * forks a new id whenever it resumes a session that is still running, so the recorded id can point
@@ -133,7 +184,8 @@ function wireIpc(): void {
   ipcMain.handle('attention:clear', () => attention.clear())
   // the renderer says what is on screen, so the app does not announce what you are looking at
   ipcMain.on('attention:watching', (_, sessionId: string | null) => attention.watching(sessionId))
-  ipcMain.handle('catalog:list', () => catalog(repos.list().map((r) => r.path)))
+  // built-ins first, so a command Claude Code ships wins the name over one of the same name on disk
+  ipcMain.handle('catalog:list', () => [...builtinItems(BUILTINS()), ...catalog(repos.list().map((r) => r.path))])
   ipcMain.handle('catalog:mcp', () => mcpServers(repos.list().map((r) => r.path)))
   ipcMain.handle('repos:list', (): Repo[] => repos.list())
   ipcMain.handle('repos:upsert', (_, r: Repo): Repo => repos.upsert(r))
@@ -147,9 +199,11 @@ function wireIpc(): void {
   })
 
   ipcMain.handle('agents:list', (): Agent[] => agents.list())
-  ipcMain.handle('agents:launch', (_, req: LaunchRequest, cols: number, rows: number): Agent =>
-    agents.launch(req, cols, rows)
-  )
+  ipcMain.handle('agents:launch', (_, req: LaunchRequest, cols: number, rows: number): Agent => {
+    const a = agents.launch(req, cols, rows)
+    maybeProbeBuiltins(req, a)
+    return a
+  })
   ipcMain.handle('agents:resume', (_, id: string, cols: number, rows: number) => resumeLatest(id, cols, rows))
   ipcMain.handle('agents:stop', (_, id: string) => agents.stop(id))
   ipcMain.handle('agents:remove', (_, id: string) => agents.remove(id))

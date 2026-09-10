@@ -1,0 +1,20 @@
+startar appen ändå — /health svarar OK — och faller först vid första K8s-anropet när Config.fromCluster() inte hittar
+ServiceAccount-filerna. Symptomet blir ett fel i dashboarden, inte en krasch vid start.
+
+✻ Crunched for 1m 2s · done onsdag 14:59
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+Manage MCP servers
+6 servers
+
+User MCPs (/Users/pontus.alm@m10s.io/.claude.json)
+❯ mobility-pro-docs · ✔ connected · 3 tools
+obsidian · ✔ connected · 12 tools
+skynex-utility-api · ✔ connected · 5 tools
+
+Built-in MCPs (always available)
+browser · ✔ connected · 11 tools
+plugin:developer-documentation:developer-documentation · △ needs authentication
+plugin:slack:slack · ✔ connected · 13 tools
+
+https://code.claude.com/docs/en/mcp for help
+↑/↓ to navigate · Enter to confirm · Esc to cancel

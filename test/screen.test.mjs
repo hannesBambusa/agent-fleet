@@ -22,7 +22,7 @@ import { join } from 'node:path'
 const dir = mkdtempSync(join(tmpdir(), 'agent-fleet-screen-'))
 const out = join(dir, 'screen.cjs')
 await build({
-  entryPoints: ['src/renderer/src/workspace/screen.ts'],
+  entryPoints: ['src/shared/screen.ts'],
   bundle: true,
   platform: 'node',
   format: 'cjs',
@@ -33,6 +33,14 @@ const { Screen, renderScreen, clean, readOptions, contentEnd, contentDepth, echo
   await import(`file://${out}`).then((m) => m.default ?? m)
 
 const CAPTURE = readFileSync('test/fixtures/claude-tui-2.1.266.raw', 'utf8')
+
+// The second fixture is a real `/mcp` menu, but it is screen rows rather than bytes: it is what the
+// card rendered on a live agent, handed back after the six servers came out as three. Rows, not
+// bytes, means the indentation is already gone, which is exactly the information a parser would
+// want to tell a group heading from a choice. Say so rather than pretending otherwise.
+const MCP = readFileSync('test/fixtures/mcp-menu-2.1.266.screen.txt', 'utf8').replace(/\n$/, '').split('\n')
+// what sits under any menu on a real screen, lifted off the capture above
+const COMPOSER = ['─'.repeat(80), '❯', '─'.repeat(80), '⏵⏵ auto mode on (shift+tab to cycle)']
 
 /** paint text at an absolute cell, the way the TUI does: home, down, right, write, clear the rest */
 const at = (row, col, text) => `\x1b[H\r\x1b[${row}B${col ? `\x1b[${col}C` : ''}${text}\x1b[K`
@@ -176,6 +184,40 @@ test('a command that wiped the screen is measurably shallower than the one befor
   const cleared = renderScreen(CAPTURE + '\x1b[2J' + at(1, 0, '▐▛███▛█   Claude Code v2.1.266')).map(clean)
   assert.ok(contentDepth(cleared) < contentDepth(rows))
   assert.equal(readRun(renderScreen(CAPTURE + '\x1b[2J'), '/clear', 0), null, 'no echo survives the wipe')
+})
+
+test('the real /mcp menu offers every server, not just the first group', () => {
+  const found = readOptions([...MCP, ...COMPOSER].map(clean))
+  assert.equal(found.options.length, 6, 'the menu says 6 servers, and it means it')
+  assert.deepEqual(found.options.slice(3).map((o) => o.split(' · ')[0]), [
+    'browser',
+    'plugin:developer-documentation:developer-documentation',
+    'plugin:slack:slack'
+  ])
+  assert.equal(found.cursor, 0)
+  assert.equal(found.marked, true)
+})
+
+test('a group heading is not a choice, and neither are the key hints under the menu', () => {
+  const found = readOptions([...MCP, ...COMPOSER].map(clean))
+  for (const not of ['User MCPs', 'Built-in MCPs', 'Manage MCP servers', '6 servers', '↑/↓', 'https://']) {
+    assert.ok(!found.options.some((o) => o.startsWith(not)), `${not} must not be pickable`)
+  }
+})
+
+test('a menu with no echo starts at its own top edge, not eight rows up into the conversation', () => {
+  // the bug this fixture was handed over for: /mcp showed two sentences of an earlier answer
+  const run = readRun([...MCP, ...COMPOSER], '/mcp', 0)
+  assert.equal(run.body[0], 'Manage MCP servers')
+  assert.ok(!run.body.some((l) => /Config\.fromCluster/.test(l)), 'the conversation above is not the answer')
+  assert.ok(!run.body.some((l) => /Crunched for/.test(l)), 'nor is the spinner line')
+  assert.equal(run.anchored, false)
+})
+
+test('the menu is bounded above by ▔, which is not the ─ the composer draws with', () => {
+  const rows = [...MCP, ...COMPOSER].map(clean)
+  assert.match(MCP[4], /^▔+$/)
+  assert.equal(contentEnd(rows), MCP.length, 'the composer box still wins as the end of the conversation')
 })
 
 test('a menu with no echo above it is shown, and flagged as not certainly the command answer', () => {
