@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Screen, clean, delta, readOptions, walk } from './screen'
 
 interface Prompt {
   question: string
@@ -7,78 +8,36 @@ interface Prompt {
   cursor: number
 }
 
-const ANSI = /\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]/g
-const OPTION = /^\s*(❯|>)?\s*(\d+)[.)]\s+(.+?)\s*$/
-// Claude Code draws the prompt inside a box, so every line arrives wrapped in border glyphs
-const BORDER_L = /^[\s│┃|╭╰├┌└]+/
-const BORDER_R = /[\s│┃|╮╯┤┐┘]+$/
-
-function clean(line: string): string {
-  return line.replace(BORDER_L, '').replace(BORDER_R, '')
-}
-
 /**
  * Claude Code draws its permission prompt in the terminal, so the only way to offer it in chat is to
  * read what the pty printed and pick the choices back out. Best effort by design: when the shape is
  * not recognised the chat falls back to sending you to the terminal, which always works.
+ *
+ * It reads the screen the pty has been replayed onto, not the buffer. Stripping the escapes and
+ * splitting on newlines used to be enough; 2.1.x repaints single cells at absolute positions and
+ * never ends a row, so the same buffer now flattens to one line and no prompt is ever found in it.
  */
-export function parsePrompt(raw: string): Prompt | null {
-  const lines = raw
-    .replace(ANSI, '')
-    .split(/\r?\n/)
-    .map(clean)
-  const tail = lines.slice(-60)
+export function readPrompt(lines: string[]): Prompt | null {
+  const tail = lines.map(clean).slice(-60)
+  const found = readOptions(tail)
+  if (!found) return null
+  const { options, cursor, at } = found
 
-  const options: string[] = []
-  let cursor = 0
-  let lastOptionAt = -1
-  for (let i = 0; i < tail.length; i++) {
-    const m = OPTION.exec(tail[i])
-    if (!m) continue
-    const index = Number(m[2])
-    // options restart at 1; a later block replaces an earlier one
-    if (index === 1) {
-      options.length = 0
-      cursor = 0
+  const rule = (l: string): boolean => !l.trim() || /^[─—=_·.\s]+$/.test(l.trim())
+  // The question is whatever sits above the choices, back to the top of the box it is drawn in.
+  // Without that bound the lookback runs off the top of the box and into the conversation, and
+  // quotes an older message that happened to end in a question mark.
+  const top = Math.max(0, at - options.length)
+  let from = Math.max(0, top - 8)
+  for (let i = top; i >= from; i--) {
+    if (rule(tail[i])) {
+      from = i + 1
+      break
     }
-    if (index !== options.length + 1) continue
-    if (m[1]) cursor = options.length
-    options.push(m[3].replace(/\s*\(esc\)\s*$/i, ''))
-    lastOptionAt = i
   }
-  if (options.length < 2 || lastOptionAt === -1) {
-    const bare = bareSelect(tail)
-    if (!bare) return null
-    options.length = 0
-    options.push(...bare.options)
-    cursor = bare.cursor
-    lastOptionAt = bare.at
-  }
-
-  const above = tail.slice(Math.max(0, lastOptionAt - options.length - 8), lastOptionAt - options.length + 1)
-  const text = above.map((l) => l.trim()).filter((l) => l && !/^[─—=_·.\s]+$/.test(l))
+  const text = tail.slice(from, top + 1).map((l) => l.trim()).filter((l) => l && !rule(l))
   const question = text.find((l) => /\?$/.test(l)) ?? text[text.length - 1] ?? 'Claude needs your approval'
   return { question, detail: text.filter((l) => l !== question).slice(-4), options, cursor }
-}
-
-/**
- * Some prompts, the workspace trust dialog among them, list their choices without numbers. They are
- * recognised by the highlight marker plus a short run of terse lines around it.
- */
-function bareSelect(tail: string[]): { options: string[]; cursor: number; at: number } | null {
-  const marker = tail.map((l, i) => ({ l, i })).filter(({ l }) => /^❯\s+\S/.test(l)).pop()
-  if (!marker) return null
-  const terse = (l: string): boolean => !!l && l.length < 70 && !/[.:]$/.test(l)
-  const options = [marker.l.replace(/^❯\s+/, '')]
-  let at = marker.i
-  for (let i = marker.i + 1; i < tail.length && options.length < 5; i++) {
-    const line = tail[i].trim()
-    if (!line) break
-    if (!terse(line)) break
-    options.push(line)
-    at = i
-  }
-  return options.length >= 2 ? { options, cursor: 0, at } : null
 }
 
 export function ApprovalCard({
@@ -96,9 +55,18 @@ export function ApprovalCard({
 
   useEffect(() => {
     let alive = true
+    // the screen is kept and fed only what it has not seen; replaying the whole ring every tick
+    // costs tens of milliseconds on the render thread, four times a second, for no new information
+    let screen = new Screen()
+    let seen = ''
     const load = (): void => {
       void window.api.pty.history(agentId).then((h) => {
-        if (alive) setPrompt(parsePrompt(h))
+        if (!alive) return
+        const d = delta(seen, h)
+        if (d.reset) screen = new Screen()
+        screen.write(d.text)
+        seen = h
+        setPrompt(readPrompt(screen.lines()))
       })
     }
     load()
@@ -112,9 +80,7 @@ export function ApprovalCard({
   function choose(index: number): void {
     if (!prompt) return
     // the TUI moves a highlight, so walk it to the wanted row and press return
-    const steps = index - prompt.cursor
-    const key = steps > 0 ? '\x1b[B' : '\x1b[A'
-    for (let i = 0; i < Math.abs(steps); i++) window.api.pty.write(agentId, key)
+    for (const key of walk(prompt.cursor, index)) window.api.pty.write(agentId, key)
     setTimeout(() => window.api.pty.write(agentId, '\r'), 40)
     setSent(true)
     setTimeout(() => setSent(false), 2500)

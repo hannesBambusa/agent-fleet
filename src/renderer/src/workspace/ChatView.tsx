@@ -4,6 +4,7 @@ import { age, clock, dur, tokens as fmtTokens } from '../lib/format'
 import { Markdown } from './Markdown'
 import { useCountUp } from '../lib/useCountUp'
 import { ApprovalCard } from './Approval'
+import { SlashRunCard } from './SlashRun'
 import { termSize } from '../terminal/Terminal'
 import { Divider } from '../lib/Divider'
 import { useQuick } from '../state/quickCommands'
@@ -43,6 +44,10 @@ export function ChatView({
 }): JSX.Element {
   const turns = useMemo(() => toTurns(s.transcript), [s.transcript])
   const [pending, setPending] = useState<Array<{ id: string; ts: string; text: string }>>([])
+  // A slash command is not a message, so it gets no echo bubble and no place in the conversation.
+  // It is an interaction that happens in the terminal and leaves its own surface behind, which is
+  // what `before` is for: the pty as it stood the instant the keystrokes went in.
+  const [runs, setRuns] = useState<Array<{ id: string; ts: string; text: string; before: Promise<string> }>>([])
   const [draft, setDraft] = useState('')
 
   // An echo lives until the same words show up in the transcript. Claude Code rewrites a pasted
@@ -68,12 +73,42 @@ export function ChatView({
     })
     if (keep.length !== pending.length) setPending(keep)
   }, [s.transcript, pending, agent?.status])
+  // The last thing the session said of its own accord. What was sent to it does not count: an
+  // older Claude Code writes the slash command itself to the transcript, and taking that for an
+  // answer would close the terminal card the instant it opened.
+  const lastSaid = useMemo(() => {
+    for (let i = s.transcript.length - 1; i >= 0; i--) {
+      const it = s.transcript[i]
+      if (it.kind !== 'prompt' && it.kind !== 'command') return Date.parse(it.ts)
+    }
+    return 0
+  }, [s.transcript])
+
+  // A command that turns into real work is drawn by the chat itself, so the terminal card steps
+  // aside rather than showing the same turn twice. The half hour is the same safety valve the
+  // echoes have: a card that never resolves must not outlive the session.
+  useEffect(() => {
+    if (!runs.length) return
+    const dead = !!agent && agent.status === 'exited'
+    const keep = runs.filter((r) => !dead && lastSaid <= Date.parse(r.ts) && now - Date.parse(r.ts) < 30 * 60_000)
+    if (keep.length !== runs.length) setRuns(keep)
+  }, [runs, lastSaid, agent?.status, now])
+
+  // An older Claude Code does record the command in the transcript, and that chip would be exactly
+  // the message the user asked not to see beside the surface already showing the same command.
+  const shown = useMemo(
+    () =>
+      runs.length
+        ? turns.filter((t) => !(t.command && runs.some((r) => r.text === t.text && Date.parse(t.ts) >= Date.parse(r.ts) - 5_000)))
+        : turns,
+    [turns, runs]
+  )
   const box = useRef<HTMLDivElement>(null)
   const [stick, setStick] = useState(true)
   useEffect(() => {
     const el = box.current
     if (el && stick) el.scrollTop = el.scrollHeight
-  }, [turns, pending, stick])
+  }, [turns, pending, runs, stick])
 
   const live = !!agent && agent.status !== 'exited'
   // an agent that died before writing anything left its reason in the terminal, nowhere else
@@ -218,9 +253,18 @@ export function ChatView({
   function send(override?: string): void {
     const text = (override ?? draft).trim()
     if (!text || !agent) return
-    // the transcript is written in bursts, so a sent message would sit invisible for a second or
-    // two; show it at once and drop the echo when the real one arrives
-    setPending((p) => [...p, { id: `pending-${Date.now()}`, ts: new Date().toISOString(), text }])
+    const ts = new Date().toISOString()
+    if (text.startsWith('/')) {
+      // The screen the command started from has to be read before the keystrokes go in: /skills
+      // answers instantly, and a screen sampled once the card has mounted already has the answer
+      // on it, so nothing about it would look new.
+      const before = window.api.pty.history(agent.id).catch(() => '')
+      setRuns((r) => [...r, { id: `run-${Date.now()}`, ts, text, before }])
+    } else {
+      // the transcript is written in bursts, so a sent message would sit invisible for a second or
+      // two; show it at once and drop the echo when the real one arrives
+      setPending((p) => [...p, { id: `pending-${Date.now()}`, ts, text }])
+    }
     // A slash command opens Claude Code's command menu while it is being typed, and a return that
     // arrives before the menu has settled picks the highlighted entry instead of sending the line —
     // which is how "/commit skip" went in as "/commit" and then again in full. Plain text for a
@@ -248,24 +292,48 @@ export function ChatView({
         }}
         className="select min-h-0 flex-1 overflow-auto px-5 py-4"
       >
-        {turns.map((t) => (
+        {shown.map((t) => (
           <Bubble key={t.id} t={t} agentId={agent?.id ?? null} cwd={s.cwd} openTools={openTools} />
         ))}
-        {!turns.length && !busy && !starting && (
+        {!shown.length && !runs.length && !busy && !starting && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--dim)]">
             <span className="text-[var(--muted)]">{empty ? 'session ready' : 'nothing said yet'}</span>
             {empty && <span>type below, or press the terminal tab to use Claude Code directly</span>}
           </div>
         )}
-        {pending.map((p) => (
-          <Bubble
-            key={p.id}
-            t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }}
-            agentId={agent?.id ?? null}
-            cwd={s.cwd}
-            openTools={openTools}
-          />
-        ))}
+        {/* echoes and command surfaces are two lists, so they are put back in the order they were
+            sent; a surface belongs where its command was typed, not at the end of the log */}
+        {[
+          ...pending.map((p) => ({
+            ts: p.ts,
+            node: (
+              <Bubble
+                key={p.id}
+                t={{ id: p.id, role: 'you', ts: p.ts, text: p.text, command: p.text.startsWith('/'), tools: [] }}
+                agentId={agent?.id ?? null}
+                cwd={s.cwd}
+                openTools={openTools}
+              />
+            )
+          })),
+          ...(agent
+            ? runs.map((r) => ({
+                ts: r.ts,
+                node: (
+                  <SlashRunCard
+                    key={r.id}
+                    agentId={agent.id}
+                    command={r.text}
+                    before={r.before}
+                    onOpenTerminal={onOpenTerminal}
+                    onGone={() => setRuns((list) => list.filter((x) => x.id !== r.id))}
+                  />
+                )
+              }))
+            : [])
+        ]
+          .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
+          .map((x) => x.node)}
         {(waiting || empty) && agent && (
           <ApprovalCard agentId={agent.id} quiet={!waiting} onOpenTerminal={onOpenTerminal} />
         )}
