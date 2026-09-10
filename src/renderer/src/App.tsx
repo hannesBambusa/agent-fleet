@@ -203,6 +203,7 @@ export default function App(): JSX.Element {
         hooksInstalled={hooks.status ? hooks.status.installed : null}
         onInstallHooks={() => void hooks.install()}
         onOpen={open}
+        now={now}
         onNew={() => setLaunching(true)}
         crumb={current ? (current.topic ?? current.repo) : null}
         onBack={() => setOpened(null)}

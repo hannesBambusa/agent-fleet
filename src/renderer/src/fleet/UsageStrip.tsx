@@ -1,5 +1,6 @@
 import type { Session, UsageLimit, UsageSnapshot } from '../../../shared/types'
 import { dur, tokens } from '../lib/format'
+import { useBurn, type Burn as BurnRate } from '../state/burn'
 
 // Fallback only: used when no status-line payload has arrived for the session yet. Every current
 // model is 1M, and a live payload carries the real size anyway.
@@ -27,7 +28,16 @@ function label(l: UsageLimit): string {
  * The same four numbers the status line carries, kept in view while you work: how full the context
  * of the session you are looking at is, and how much of the plan's windows is spent.
  */
-export function UsageStrip({ snap, session }: { snap: UsageSnapshot | null; session: Session | null }): JSX.Element | null {
+export function UsageStrip({
+  snap,
+  session,
+  now
+}: {
+  snap: UsageSnapshot | null
+  session: Session | null
+  now: number
+}): JSX.Element | null {
+  const burn = useBurn(snap, now)
   const limits = snap?.limits ?? []
   // the session's own status-line payload knows both numbers exactly; the transcript total is a guess
   const liveCtx = session ? snap?.contexts[session.id] : undefined
@@ -65,6 +75,7 @@ export function UsageStrip({ snap, session }: { snap: UsageSnapshot | null; sess
           </span>
         </span>
       )}
+      {burn && burn.spanMs > 0 && <Burn burn={burn} />}
       {limits.map((l) => (
         <Gauge
           key={l.key}
@@ -102,6 +113,43 @@ function Gauge({
         {percent}%
       </span>
       {right && <span className="mono text-[9.5px] text-[var(--dim)]">{right}</span>}
+    </span>
+  )
+}
+
+/**
+ * Whether the five hour window runs out before it resets.
+ *
+ * The only question the rate answers that changes anything, so it is answered in one figure and one
+ * colour: green means the window turns over before the limit does, red means it does not and says
+ * when, grey means nothing is being spent. Everything behind it is on hover, where it costs no
+ * space. Nothing at all is shown until there are enough samples to mean something.
+ */
+function Burn({ burn }: { burn: BurnRate }): JSX.Element {
+  // below this a rate is noise: a poll landing either side of a token or two, not work
+  const idle = burn.perHour <= 0.5
+  const bad = burn.capsFirst
+  return (
+    <span
+      className="flex items-center gap-1.5"
+      title={
+        idle
+          ? `nothing spent in the last ${dur(burn.spanMs)}`
+          : `${burn.perHour.toFixed(1)}% of the 5 hour window per hour, over the last ${dur(burn.spanMs)}` +
+            (bad
+              ? ` · full ${dur(burn.earlyBy ?? 0)} before it resets`
+              : burn.needRate !== null
+                ? ` · it would take ${burn.needRate.toFixed(0)}%/h to run out first`
+                : '')
+      }
+    >
+      <span className="lbl">burn</span>
+      <span
+        className="mono text-[10px] font-medium"
+        style={{ color: idle ? 'var(--dim)' : bad ? 'var(--danger)' : 'var(--accent)' }}
+      >
+        {idle ? 'idle' : bad ? `full in ${dur(burn.toCap ?? 0)}` : 'ok'}
+      </span>
     </span>
   )
 }

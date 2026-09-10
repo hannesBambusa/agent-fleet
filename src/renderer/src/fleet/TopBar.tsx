@@ -12,6 +12,7 @@ interface Props {
   onInstallHooks: () => void
   onNew: () => void
   onOpen: (sessionId: string) => void
+  now: number
   crumb?: string | null
   onBack?: () => void
   scale: number
@@ -28,6 +29,7 @@ export function TopBar({
   onInstallHooks,
   onNew,
   onOpen,
+  now,
   crumb,
   onBack,
   scale,
@@ -84,7 +86,7 @@ export function TopBar({
           </button>
         </div>
       </div>
-      <UsageStrip snap={usage} session={contextSession} />
+      <UsageStrip snap={usage} session={contextSession} now={now} />
     </div>
   )
 }
