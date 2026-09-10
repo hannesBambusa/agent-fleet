@@ -124,18 +124,18 @@ const api = {
 
   // status, diffs, the commit graph, and the writes behind each button
   git: {
-    status: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke('git:status', cwd),
+    status: (cwd: string): Promise<GitStatus | null> => ipcRenderer.invoke('git:status', cwd),
     push: (cwd: string): Promise<string> => ipcRenderer.invoke('git:push', cwd),
     graph: (cwd: string, max?: number): Promise<GitCommit[]> => ipcRenderer.invoke('git:graph', cwd, max),
     log: (cwd: string): Promise<GitCommit[]> => ipcRenderer.invoke('git:log', cwd),
-    mergePlan: (cwd: string): Promise<MergePlan> => ipcRenderer.invoke('git:mergePlan', cwd),
+    mergePlan: (cwd: string): Promise<MergePlan | null> => ipcRenderer.invoke('git:mergePlan', cwd),
     merge: (cwd: string): Promise<string> => ipcRenderer.invoke('git:merge', cwd),
     publish: (cwd: string): Promise<string> => ipcRenderer.invoke('git:publish', cwd),
     shipPlan: (cwd: string): Promise<ShipPlan> => ipcRenderer.invoke('git:shipPlan', cwd),
     ship: (cwd: string, message: string): Promise<ShipResult> => ipcRenderer.invoke('git:ship', cwd, message),
     prUrl: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:prUrl', cwd),
     pushBranch: (cwd: string, name: string): Promise<string> => ipcRenderer.invoke('git:pushBranch', cwd, name),
-    applyPlan: (cwd: string): Promise<ApplyPlan> => ipcRenderer.invoke('git:applyPlan', cwd),
+    applyPlan: (cwd: string): Promise<ApplyPlan | null> => ipcRenderer.invoke('git:applyPlan', cwd),
     apply: (cwd: string): Promise<string> => ipcRenderer.invoke('git:apply', cwd),
     commit: (cwd: string, sha: string): Promise<GitCommitDetail> => ipcRenderer.invoke('git:commit', cwd, sha),
     branches: (cwd: string): Promise<GitBranch[]> => ipcRenderer.invoke('git:branches', cwd),

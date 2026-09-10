@@ -1,5 +1,5 @@
 import type { GitBranch, GitCommit, GitCommitDetail, GitFile, GitStatus } from '../../shared/types'
-import { baseOf, git, upstreamState } from './exec'
+import { baseOf, git, isRepo, upstreamState } from './exec'
 
 // Read-only queries: safe to call on a timer, and the git pane does exactly that.
 
@@ -24,7 +24,9 @@ function label(code: string): string {
   }
 }
 
-export async function status(cwd: string): Promise<GitStatus> {
+/** `null` when this directory is not a repository, which is a state to draw, not an error to throw. */
+export async function status(cwd: string): Promise<GitStatus | null> {
+  if (!(await isRepo(cwd))) return null
   const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim()
   const branch = (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   const out = await git(cwd, ['status', '--porcelain', '-uall', '-z'])
