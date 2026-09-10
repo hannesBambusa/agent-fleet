@@ -55,7 +55,7 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
       <button
         onClick={onFleet}
         title="back to the full fleet"
-        className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5 text-left hover:bg-[var(--raised)]"
+        className="flex shrink-0 cursor-pointer items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5 text-left hover:bg-[var(--hover)]"
       >
         <span className="lbl !text-[var(--fg)]">// fleet</span>
         {waiting > 0 ? (
@@ -105,8 +105,8 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
                     onClick={() => onOpen(s.id)}
                     style={{ paddingLeft: 12 + depth * 12 }}
                     title={`${s.repo} · ${s.state}${s.currentTool ? ` · ${s.currentTool}` : ''}`}
-                    className={`relative flex w-full items-center gap-2 py-[7px] pr-2.5 text-left transition-colors ${
-                      on ? 'bg-[var(--raised)]' : 'hover:bg-[var(--raised)]/60'
+                    className={`relative flex w-full cursor-pointer items-center gap-2 py-[7px] pr-2.5 text-left transition-colors ${
+                      on ? 'bg-[var(--raised)]' : 'hover:bg-[var(--hover)]'
                     } ${live ? (sub ? 'rail-live rail-live-sub' : 'rail-live') : ''} ${quiet ? 'opacity-70' : ''}`}
                   >
                     {/* the left bar is the state: green while it works, amber when it needs you */}

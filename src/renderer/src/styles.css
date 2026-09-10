@@ -33,6 +33,16 @@ body { background: var(--ink); color: var(--fg); user-select: none; overflow: hi
 ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* A button that does something says so. The browser's default for a button is an arrow, which is
+   right for a form and wrong for a list of rows that behave like links, which is most of this app. */
+button:not(:disabled):not([aria-disabled='true']) {
+  cursor: pointer;
+}
+button:disabled,
+button[aria-disabled='true'] {
+  cursor: default;
+}
+
 @keyframes pulse-ring {
   0% { r: var(--r0); opacity: 0.55; }
   100% { r: var(--r1); opacity: 0; }
@@ -114,6 +124,9 @@ body { background: var(--ink); color: var(--fg); user-select: none; overflow: hi
   --diff-del-bg: color-mix(in srgb, #d95926 13%, transparent);
   --diff-add-word: color-mix(in srgb, #199e70 32%, transparent);
   --diff-del-word: color-mix(in srgb, #d95926 28%, transparent);
+  /* A hover that reads on top of the repo wash behind the compact rows, where a translucent
+     --raised disappeared into the tint. Redefined per theme, like every other colour. */
+  --hover: color-mix(in srgb, var(--fg) 9%, transparent);
   --diff-add-ink: #8bf0bd;
   --diff-del-ink: #ff9b93;
 }

@@ -169,6 +169,8 @@ function apply(t: Theme): void {
   root.style.setProperty('--glow', t.dark ? '0.35' : '0.7')
   root.style.setProperty('--sub', t.dark ? '#bb9af7' : '#5b2d91')
   root.style.setProperty('--sub-soft', t.dark ? '16%' : '34%')
+  // a hover has to lift off the panel on a dark ground and press into it on a light one
+  root.style.setProperty('--hover', t.dark ? 'color-mix(in srgb, #ffffff 9%, transparent)' : 'color-mix(in srgb, #000000 7%, transparent)')
   // a diff sits on the panel, so its syntax colours have to survive that ground in both directions
   const code = t.dark
     ? { comment: '#7a8b99', string: '#c3e88d', number: '#f78c6c', keyword: '#c792ea', fn: '#82aaff', punct: '#9aa4b2' }

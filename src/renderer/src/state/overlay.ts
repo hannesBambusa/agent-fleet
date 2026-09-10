@@ -20,6 +20,26 @@ export function onOverlayChange(cb: () => void): () => void {
   return () => window.removeEventListener(EVENT, cb)
 }
 
+/**
+ * Hold the view out of the way until the returned function is called.
+ *
+ * For things that are not a mounted component: a drag lasts from one pointer event to another, and
+ * while it lasts the pointer will cross the browser pane, which is a native view. Events over it
+ * never reach the page, so a drag that is not holding the view open simply stops receiving moves
+ * and never sees its own mouseup.
+ */
+export function holdOverlay(): () => void {
+  open += 1
+  announce()
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    open -= 1
+    announce()
+  }
+}
+
 /** hold the native view out of the way for as long as this component is mounted */
 export function useOverlay(active: boolean): void {
   useEffect(() => {
