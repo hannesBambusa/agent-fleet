@@ -34,7 +34,7 @@ async function bundle(entry, name) {
 }
 
 const { applyLine } = await bundle('src/main/sessions/parse.ts', 'parse.cjs')
-const { toTurns } = await bundle('src/renderer/src/workspace/turns.ts', 'turns.cjs')
+const { toTurns, hideClaimed, commandToken } = await bundle('src/renderer/src/workspace/turns.ts', 'turns.cjs')
 
 const BASH = 'toolu_vrtx_019jBzMfXK97z44ZGhGLjb9Z'
 const READ = 'toolu_vrtx_01GD6qF6Pbe7mui8aytpH7Mz'
@@ -51,6 +51,8 @@ function session() {
     id: 's1',
     parentId: null,
     transcript: [],
+    // the command timeline down the side of the chat; only the slash-command path writes to it
+    commands: [],
     turns: 0,
     currentTool: null,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
@@ -145,6 +147,49 @@ test('a result whose call is no longer in the transcript is left off, not misfil
   const [turn] = toTurns(items)
   assert.equal(turn.tools.length, 1)
   assert.equal(turn.tools[0].result?.text, '1\tFROM eclipse-temurin:21-jdk AS build')
+})
+
+// A slash command must appear once, as its own surface, never as a message. Claude Code 2.1.266
+// records some of them in the transcript and not others: this is the real `/mcp` line off Hannes's
+// session at 09:47:34 UTC, which came back as a green `you` bubble beside the card.
+const MCP_LINE = JSON.stringify({
+  type: 'user',
+  uuid: 'c0ffee',
+  timestamp: '2026-09-10T09:47:34.812Z',
+  message: {
+    role: 'user',
+    content:
+      '<command-name>/mcp</command-name>\n <command-message>mcp</command-message>\n <command-args></command-args>'
+  }
+})
+
+test('a command the composer sent is not also drawn as a message', () => {
+  const turns = toTurns(feed([MCP_LINE]))
+  assert.equal(turns.length, 1, 'the transcript really does record this one')
+  assert.equal(turns[0].command, true)
+  const claims = [{ token: 'mcp', at: Date.parse('2026-09-10T09:47:34.106Z') }]
+  assert.deepEqual(hideClaimed(turns, claims), [])
+})
+
+test('the slash is not part of the name, whichever side of the wire it came from', () => {
+  // the composer sends `/mcp`, the CLI has written both `/mcp` and `mcp` inside <command-name>
+  assert.equal(commandToken('/mcp'), 'mcp')
+  assert.equal(commandToken('mcp'), 'mcp')
+  assert.equal(commandToken('/commit skip the tests'), 'commit')
+  assert.equal(commandToken('  /MCP  '), 'mcp')
+})
+
+test('the same command run earlier keeps its place in the history', () => {
+  const turns = toTurns(feed([MCP_LINE]))
+  // a claim made after the fact cannot reach back and erase a command from an hour ago
+  const claims = [{ token: 'mcp', at: Date.parse('2026-09-10T10:47:34.000Z') }]
+  assert.equal(hideClaimed(turns, claims).length, 1)
+})
+
+test('an unclaimed command, and anything Claude said, are left alone', () => {
+  const turns = toTurns(feed([MCP_LINE]))
+  assert.equal(hideClaimed(turns, [{ token: 'skills', at: Date.parse('2026-09-10T09:47:34.106Z') }]).length, 1)
+  assert.deepEqual(hideClaimed([], [{ token: 'mcp', at: 0 }]), [])
 })
 
 test.after(() => rmSync(dir, { recursive: true, force: true }))

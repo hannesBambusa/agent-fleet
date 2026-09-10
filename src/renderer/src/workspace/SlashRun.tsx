@@ -12,10 +12,12 @@ const AIM_MS = 2_500
 /**
  * What the terminal is showing for one slash command, in the chat.
  *
- * Claude Code 2.1.x writes no slash command to the transcript, so the pty is the only record that
- * one was run. The card replays that pty onto a screen, finds the command's own echo on it and
- * shows what is under it: printed output for `/skills` and its kind, clickable choices for the ones
- * that answer with a menu, and the menu after that when a choice opens another.
+ * Claude Code 2.1.266 writes some slash commands to the transcript and not others: `/mcp` leaves a
+ * `<command-name>` line, `/skills` and `/diff` leave nothing. Either way it never records what the
+ * command answered, so the pty is the only place the answer exists. The card replays that pty onto
+ * a screen, finds the command's own echo on it and shows what is under it: printed output for
+ * `/skills` and its kind, and for the ones that answer with a menu, the menu itself, as a list the
+ * arrow keys walk, followed by whatever the next one is when a choice opens another.
  *
  * This is the command's own surface, not a message: in the terminal the line you type is consumed
  * and what comes back stands on its own, so there is no bubble here either, only a quiet label
@@ -166,17 +168,92 @@ export function SlashRunCard({
     }
   }, [agentId, command, before])
 
-  function choose(index: number): void {
-    const options = run?.options
-    if (!options || aim.current) return
-    setMissed(null)
-    for (const key of walk(options.cursor, index)) window.api.pty.write(agentId, key)
-    aim.current = { index, label: options.options[index], at: Date.now() }
-    // the TUI needs a moment to redraw the highlight before there is anything to read back
-    setTimeout(() => poke.current(), 120)
-    setTimeout(() => poke.current(), 400)
+  // A menu is only offered as a list when the TUI's own highlight was on screen, since everything
+  // below drives the real thing with real keystrokes.
+  const menu = run?.options?.marked ? run.options : null
+  // The row the user is on. Moving it and moving the terminal's highlight are the same act: the
+  // arrow key goes to the pty and the row moves here at once, because waiting a poll for the screen
+  // to come back would make the list feel broken. Whenever the screen reports a cursor of its own
+  // the local row is dropped and the terminal's is used, so the two cannot drift apart silently.
+  // what the screen last said, as one comparable value; option labels contain spaces and slashes,
+  // so they cannot simply be joined with one of those
+  const at = menu ? JSON.stringify([menu.cursor, menu.options]) : ''
+  const [local, setLocal] = useState({ at: '', row: 0 })
+  const row = local.at === at ? local.row : (menu?.cursor ?? 0)
+
+  const list = useRef<HTMLDivElement>(null)
+  const had = useRef(false)
+  const opened = useRef(0)
+  useEffect(() => {
+    // the keyboard belongs to the menu the moment it opens, the way it does in the terminal
+    if (menu && !had.current) {
+      list.current?.focus()
+      opened.current = Date.now()
+    }
+    had.current = !!menu
+  }, [menu])
+
+  /** the terminal needs a moment to redraw before there is anything to read back */
+  function soon(): void {
+    setTimeout(() => poke.current(), 150)
   }
 
+  function move(step: number): void {
+    if (!menu) return
+    const to = Math.min(menu.options.length - 1, Math.max(0, row + step))
+    if (to === row) return
+    window.api.pty.write(agentId, step > 0 ? '\x1b[B' : '\x1b[A')
+    setLocal({ at, row: to })
+    soon()
+  }
+
+  /** aim at a row without walking there one key at a time, which is what a click is */
+  function jump(to: number): void {
+    if (!menu || to === row) return
+    for (const key of walk(row, to)) window.api.pty.write(agentId, key)
+    setLocal({ at, row: to })
+    soon()
+  }
+
+  function commit(): void {
+    if (!menu || aim.current) return
+    // The return that opened the menu must not also answer it. The list takes focus a fraction of a
+    // second after the command goes in, so a second press out of habit would land here and confirm
+    // whichever row happened to be first.
+    if (Date.now() - opened.current < 500) return
+    setMissed(null)
+    aim.current = { index: row, label: menu.options[row], at: Date.now() }
+    soon()
+    setTimeout(() => poke.current(), 450)
+  }
+
+  function cancel(): void {
+    // Escape has to reach the TUI, not just close this list. A menu still open in the terminal with
+    // nothing in the chat saying so is the one state worse than no menu at all.
+    aim.current = null
+    setMissed(null)
+    window.api.pty.write(agentId, '\x1b')
+    soon()
+  }
+
+  function onKey(e: React.KeyboardEvent): void {
+    const keys: Record<string, () => void> = {
+      ArrowDown: () => move(1),
+      ArrowUp: () => move(-1),
+      Home: () => jump(0),
+      End: () => jump((menu?.options.length ?? 1) - 1),
+      Enter: commit,
+      Escape: cancel
+    }
+    const act = keys[e.key]
+    if (!act) return
+    e.preventDefault()
+    e.stopPropagation()
+    act()
+  }
+
+  // the command as an html id, since it starts with a slash and ids are referenced by aria
+  const slug = command.replace(/[^\w-]/g, '')
   const label = (
     <span className="mono shrink-0 text-[10.5px] text-[var(--accent)]" title={`sent to the terminal: ${command}`}>
       {command}
@@ -208,8 +285,8 @@ export function SlashRunCard({
     )
   }
 
-  // buttons drive the real TUI, so they are only offered when its highlight was actually on screen
-  const pickable = run.options?.marked ? run.options : null
+  // with the choices drawn as a list of their own, printing them again above it is just noise
+  const text = menu ? run.head : run.body
 
   return (
     <div className="mb-4 max-w-[92%]">
@@ -220,30 +297,46 @@ export function SlashRunCard({
           open terminal
         </button>
       </div>
-      {!!run.body.length && (
+      {!!text.length && (
         <pre className="select mono max-h-[420px] overflow-auto whitespace-pre rounded border border-[var(--line)] bg-[var(--panel)] px-2 py-1.5 text-[10px] leading-snug text-[var(--muted)]">
-          {run.body.join('\n')}
+          {text.join('\n')}
         </pre>
       )}
-      {pickable && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {/* the body above already lists these; without a word here the row of pills reads as
-              part of the output rather than as the thing to press */}
-          <span className="lbl mr-0.5">pick one</span>
-          {pickable.options.map((o, i) => (
-            <button
-              key={i}
-              disabled={sent}
-              onClick={() => choose(i)}
-              className={`rounded border px-2.5 py-1 text-[11px] disabled:opacity-40 ${
-                i === pickable.cursor
-                  ? 'border-[var(--accent)]/50 bg-[var(--accent-soft)] text-[var(--accent)] hover:brightness-110'
-                  : 'border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]'
-              }`}
-            >
-              {o}
-            </button>
-          ))}
+      {menu && (
+        <div
+          ref={list}
+          role="listbox"
+          tabIndex={0}
+          aria-label={`${command} choices`}
+          aria-activedescendant={`${slug}-choice-${row}`}
+          onKeyDown={onKey}
+          className="mt-1.5 overflow-hidden rounded border border-[var(--line)] bg-[var(--panel)] py-1 outline-none focus:border-[var(--accent)]"
+        >
+          {menu.rows.map((r) =>
+            r.choice === null ? (
+              <div key={r.row} className="lbl px-2 pb-0.5 pt-1.5">
+                {r.text}
+              </div>
+            ) : (
+              <div
+                key={r.row}
+                id={`${slug}-choice-${r.choice}`}
+                role="option"
+                aria-selected={r.choice === row}
+                // click to land on a row, click the row you are on to take it; a single click that
+                // both moved and confirmed would make a mis-click unrecoverable
+                onClick={() => (r.choice === row ? commit() : jump(r.choice as number))}
+                className={`mono flex cursor-pointer items-baseline gap-1.5 px-2 py-[3px] text-[11.5px] ${
+                  r.choice === row ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'text-[var(--muted)]'
+                }`}
+              >
+                {/* the terminal's own highlight, which is the one that decides what return picks */}
+                <span className="w-2 shrink-0 text-[var(--accent)]">{r.choice === menu.cursor ? '❯' : ' '}</span>
+                <span className="min-w-0 truncate">{r.text}</span>
+              </div>
+            )
+          )}
+          <div className="lbl px-2 pb-0.5 pt-1.5">↑↓ move · ↵ confirm · esc cancel</div>
         </div>
       )}
       {sent && <div className="mt-1.5 text-[10.5px] text-[var(--dim)]">sent · if nothing happens, answer it in the terminal</div>}

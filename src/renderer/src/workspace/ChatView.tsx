@@ -13,7 +13,7 @@ import { SlashMenu, useCatalogItems } from './SlashMenu'
 import { Bubble } from './Bubble'
 import { CommandBar, CommandRail } from './CommandRail'
 import { Working } from './Working'
-import { toTurns, verbFor } from './turns'
+import { commandToken, hideClaimed, toTurns, verbFor } from './turns'
 import { filterSlash, slashQuery } from './slash'
 import { annotate, collapse, lineDiff, summarise } from '../lib/lineDiff'
 import { highlight, langOf, type Token } from '../lib/highlight'
@@ -48,6 +48,9 @@ export function ChatView({
   // It is an interaction that happens in the terminal and leaves its own surface behind, which is
   // what `before` is for: the pty as it stood the instant the keystrokes went in.
   const [runs, setRuns] = useState<Array<{ id: string; ts: string; text: string; before: Promise<string> }>>([])
+  // every command this view has sent, kept for as long as the view lives, so the transcript's own
+  // record of one is recognised as ours however late it arrives
+  const [claims, setClaims] = useState<Array<{ token: string; at: number }>>([])
   const [draft, setDraft] = useState('')
 
   // An echo lives until the same words show up in the transcript. Claude Code rewrites a pasted
@@ -74,7 +77,7 @@ export function ChatView({
     if (keep.length !== pending.length) setPending(keep)
   }, [s.transcript, pending, agent?.status])
   // The last thing the session said of its own accord. What was sent to it does not count: an
-  // older Claude Code writes the slash command itself to the transcript, and taking that for an
+  // Claude Code writes some slash commands to the transcript itself, and taking one of those for an
   // answer would close the terminal card the instant it opened.
   const lastSaid = useMemo(() => {
     for (let i = s.transcript.length - 1; i >= 0; i--) {
@@ -94,15 +97,10 @@ export function ChatView({
     if (keep.length !== runs.length) setRuns(keep)
   }, [runs, lastSaid, agent?.status, now])
 
-  // An older Claude Code does record the command in the transcript, and that chip would be exactly
-  // the message the user asked not to see beside the surface already showing the same command.
-  const shown = useMemo(
-    () =>
-      runs.length
-        ? turns.filter((t) => !(t.command && runs.some((r) => r.text === t.text && Date.parse(t.ts) >= Date.parse(r.ts) - 5_000)))
-        : turns,
-    [turns, runs]
-  )
+  // Claude Code records some slash commands in the transcript and not others, and the chip it makes
+  // is exactly the message the user asked never to see beside the surface. A claim outlives the card
+  // that answered it, so the bubble cannot reappear once the card has finished or been pruned.
+  const shown = useMemo(() => hideClaimed(turns, claims), [turns, claims])
   const box = useRef<HTMLDivElement>(null)
   const [stick, setStick] = useState(true)
   // a command surface grows in place rather than by arriving, so it says when it has, or its
@@ -263,6 +261,7 @@ export function ChatView({
       // on it, so nothing about it would look new.
       const before = window.api.pty.history(agent.id).catch(() => '')
       setRuns((r) => [...r, { id: `run-${Date.now()}`, ts, text, before }])
+      setClaims((c) => [...c, { token: commandToken(text), at: Date.parse(ts) }])
     } else {
       // the transcript is written in bursts, so a sent message would sit invisible for a second or
       // two; show it at once and drop the echo when the real one arrives
@@ -447,7 +446,12 @@ export function ChatView({
                   }
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
-                    pickSlash()
+                    // One press, the way the terminal takes it. Enter used to always complete, so a
+                    // name that was already complete cost two presses to send. It completes a
+                    // half-typed name and sends a finished one; moving the highlight off an exact
+                    // match makes it a half-typed name again, which is what moving it meant.
+                    if (draft.slice(1) === slashList[slashAt]?.token) send()
+                    else pickSlash()
                     return
                   }
                   if (e.key === 'Escape') {

@@ -205,6 +205,42 @@ test('a group heading is not a choice, and neither are the key hints under the m
   }
 })
 
+test('the headings are kept for reading and left out of what the arrow keys can land on', () => {
+  const found = readOptions([...MCP, ...COMPOSER].map(clean))
+  assert.deepEqual(
+    found.rows.map((r) => [r.choice, r.text.split(' · ')[0]]),
+    [
+      [null, 'User MCPs (/Users/pontus.alm@m10s.io/.claude.json)'],
+      [0, 'mobility-pro-docs'],
+      [1, 'obsidian'],
+      [2, 'skynex-utility-api'],
+      [null, 'Built-in MCPs (always available)'],
+      [3, 'browser'],
+      [4, 'plugin:developer-documentation:developer-documentation'],
+      [5, 'plugin:slack:slack']
+    ]
+  )
+})
+
+test('a numbered menu is all choices, because the numbers are the whole structure', () => {
+  const found = readOptions(['Do you want to proceed?', '❯ 1. Yes', '  2. No'])
+  assert.deepEqual(found.rows.map((r) => r.choice), [0, 1])
+})
+
+test('the menu title is split off, so the choices are not printed once as text and once as a list', () => {
+  const run = readRun([...MCP, ...COMPOSER], '/mcp', 0)
+  assert.deepEqual(run.head, ['Manage MCP servers', '6 servers'])
+  assert.ok(!run.head.some((l) => /mobility-pro-docs/.test(l)), 'the list draws the choices, not the block')
+  assert.ok(run.body.some((l) => /mobility-pro-docs/.test(l)), 'the whole thing is still there for anything else')
+})
+
+test('printed output with no menu has no head to split off', () => {
+  const raw = CAPTURE + at(13, 0, '❯ /cost') + at(15, 0, 'Total cost: $0.42')
+  const run = readRun(renderScreen(raw), '/cost', 0)
+  assert.deepEqual(run.head, [])
+  assert.deepEqual(run.body, ['Total cost: $0.42'])
+})
+
 test('a menu with no echo starts at its own top edge, not eight rows up into the conversation', () => {
   // the bug this fixture was handed over for: /mcp showed two sentences of an earlier answer
   const run = readRun([...MCP, ...COMPOSER], '/mcp', 0)

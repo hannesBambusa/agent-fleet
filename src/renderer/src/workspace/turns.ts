@@ -27,6 +27,36 @@ export function verbFor(seed: number): string {
   return VERBS[Math.abs(Math.floor(seed / 1000)) % VERBS.length]
 }
 
+/** a command reduced to what can be compared: no leading slash, no arguments, lower case */
+export function commandToken(text: string): string {
+  return (text.trim().split(/\s+/)[0] ?? '').replace(/^\/+/, '').toLowerCase()
+}
+
+/**
+ * The conversation without the commands this view sent itself.
+ *
+ * A slash command is not a message and gets a surface of its own, but Claude Code 2.1.266 writes
+ * some of them to the transcript anyway, as a `<command-name>` user line. `/mcp` does, `/skills`
+ * and `/diff` do not, so neither the version nor the command can be assumed either way. Whatever it
+ * writes, the command must appear once.
+ *
+ * Matched on the bare token rather than the exact text, because the two sides come from different
+ * places: one is what the composer sent, the other is whatever the CLI chose to record, and a
+ * leading slash or a trailing argument has already differed between them. Matched against a claim
+ * the view made when it sent the command rather than against a live card, because the card can
+ * finish or be pruned before the transcript catches up, and the bubble must not come back when it
+ * does.
+ */
+export function hideClaimed(turns: Turn[], claims: Array<{ token: string; at: number }>): Turn[] {
+  if (!claims.length) return turns
+  return turns.filter((t) => {
+    if (t.role !== 'you') return true
+    const token = commandToken(t.text)
+    // a few seconds of slack: the CLI stamps the line, the composer stamped the claim
+    return !claims.some((c) => c.token === token && Date.parse(t.ts) >= c.at - 5_000)
+  })
+}
+
 /** the transcript is a flat log; a chat needs it grouped into turns with tools folded in */
 export function toTurns(items: TranscriptItem[]): Turn[] {
   const out: Turn[] = []

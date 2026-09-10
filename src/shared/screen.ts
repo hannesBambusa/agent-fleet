@@ -263,8 +263,24 @@ export function clean(line: string): string {
   return line.replace(BORDER_L, '').replace(BORDER_R, '')
 }
 
+/** one drawn row of a menu: a choice you can land on, or the heading of a group of them */
+export interface MenuRow {
+  text: string
+  /** index into `options`, or null when the row is a heading */
+  choice: number | null
+  /** where the row sits on the screen */
+  row: number
+}
+
 export interface Options {
   options: string[]
+  /**
+   * the menu as the terminal draws it, headings included.
+   *
+   * `options` is what the arrow keys can land on; this is what a person reads. A grouped menu is
+   * unintelligible without its headings, so they are kept here rather than thrown away.
+   */
+  rows: MenuRow[]
   /** which one the TUI has highlighted, so a choice knows how far to walk */
   cursor: number
   /** the row the first option sits on, which is where the text above it stops */
@@ -289,6 +305,7 @@ export interface Options {
  */
 export function readOptions(lines: string[]): Options | null {
   const options: string[] = []
+  let rows: MenuRow[] = []
   let cursor = 0
   let first = -1
   let at = -1
@@ -299,6 +316,7 @@ export function readOptions(lines: string[]): Options | null {
     const index = Number(m[2])
     if (index === 1) {
       options.length = 0
+      rows = []
       cursor = 0
       marked = false
       first = i
@@ -308,10 +326,13 @@ export function readOptions(lines: string[]): Options | null {
       cursor = options.length
       marked = true
     }
-    options.push(m[3].replace(/\s*\(esc\)\s*$/i, ''))
+    const text = m[3].replace(/\s*\(esc\)\s*$/i, '')
+    rows.push({ text, choice: options.length, row: i })
+    options.push(text)
     at = i
   }
-  if (options.length >= 2 && at !== -1) return { options, cursor, first, at, marked }
+  // a numbered menu has no headings: the numbers are the whole structure
+  if (options.length >= 2 && at !== -1) return { options, rows, cursor, first, at, marked }
   return bareSelect(lines)
 }
 
@@ -370,12 +391,21 @@ function bareSelect(lines: string[]): Options | null {
   }
   if (group.length) groups.push(group)
 
-  const picks =
-    groups.length > 1 ? groups.flatMap((g) => g.slice(1)) : (groups[0] ?? []).filter((i) => i >= marker.i)
+  const grouped = groups.length > 1
+  const picks = grouped ? groups.flatMap((g) => g.slice(1)) : (groups[0] ?? []).filter((i) => i >= marker.i)
   const cursor = picks.indexOf(marker.i)
   if (picks.length < 2 || cursor < 0) return null
+  const label = (i: number): string => rows[i].replace(/^❯\s+/, '')
+  // headings are kept as rows so the list can still be read, and left out of `options` so the
+  // arrow keys cannot land on one
+  const drawn: MenuRow[] = (grouped ? groups.flat() : picks).map((i) => ({
+    text: label(i),
+    choice: picks.indexOf(i) < 0 ? null : picks.indexOf(i),
+    row: i
+  }))
   return {
-    options: picks.map((i) => rows[i].replace(/^❯\s+/, '')),
+    options: picks.map(label),
+    rows: drawn,
     cursor,
     first: picks[0],
     at: picks[picks.length - 1],
@@ -430,6 +460,13 @@ export function echoRows(rows: string[], command: string): number[] {
 export interface Run {
   /** the rows the terminal is showing for this command */
   body: string[]
+  /**
+   * the part of the body above the menu, when there is one.
+   *
+   * A menu drawn as a list needs its own title (`Manage MCP servers`, `6 servers`) but not the
+   * choices printed twice, once as text and once as buttons.
+   */
+  head: string[]
   options: Options | null
   /**
    * whether the command's own echo was found above the body.
@@ -482,13 +519,18 @@ export function readRun(lines: string[], command: string, skip: number): Run | n
     end = next
     if (options && options.at >= next) options = null
   }
+  // the top row of the menu, heading included, which is where its own title stops
+  const drawnFrom = options?.rows[0]?.row ?? -1
   // with no echo to start from, show the block the menu sits in rather than the whole screen
-  const from = start >= 0 ? start : options ? blockTop(rows, options.first) : 0
+  const from = start >= 0 ? start : drawnFrom >= 0 ? blockTop(rows, drawnFrom) : 0
   const body = rows.slice(from, Math.max(from, end))
-  while (body.length && blankish(body[0])) body.shift()
-  while (body.length && blankish(body[body.length - 1])) body.pop()
+  const head = drawnFrom >= 0 ? rows.slice(from, Math.max(from, drawnFrom)) : []
+  for (const part of [body, head]) {
+    while (part.length && blankish(part[0])) part.shift()
+    while (part.length && blankish(part[part.length - 1])) part.pop()
+  }
   // an echo with nothing under it is still an answer, the answer being that the command printed
   // nothing; only a screen with no trace of the command at all is nothing to report
   if (!body.length && !options && start < 0) return null
-  return { body, options, anchored: start >= 0 }
+  return { body, head, options, anchored: start >= 0 }
 }
