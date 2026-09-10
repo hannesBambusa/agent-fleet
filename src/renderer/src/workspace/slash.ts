@@ -22,7 +22,13 @@ const BUILT_IN: Array<[string, string]> = [
   ['agents', 'Manage subagent definitions'],
   ['review', 'Review the current changes'],
   ['init', 'Write a CLAUDE.md for this project'],
-  ['help', 'List everything available']
+  ['help', 'List everything available'],
+  // the rest of what this machine's transcripts show being used, mcp most of all
+  ['mcp', 'Manage the MCP servers this session can reach'],
+  ['skills', 'List the skills available here'],
+  ['diff', 'Show the working tree changes'],
+  ['plugin', 'Manage plugins and marketplaces'],
+  ['exit', 'End this session']
 ]
 
 export const TONE: Record<SlashItem['source'], string> = {
@@ -69,13 +75,17 @@ export function slashItems(catalog: CatalogItem[]): SlashItem[] {
 
 /** Ranks by where the typed text matches: a prefix beats a word start, which beats anything. */
 function score(item: SlashItem, q: string): number {
-  if (!q) return item.source === 'built-in' ? 1 : 2
+  // a command someone wrote for this machine beats one Claude Code ships, which the empty-query
+  // line below already said; without it the tie inside a tier falls to the alphabet, and adding
+  // `plugin` to the built-ins was enough to push `preflight` off the top for the letter p
+  const own = item.source === 'built-in' ? 0 : 1
+  if (!q) return own + 1
   const t = item.token.toLowerCase()
-  if (t === q) return 100
-  if (t.startsWith(q)) return 80
-  if (t.split(/[:-]/).some((part) => part.startsWith(q))) return 60
-  if (t.includes(q)) return 40
-  if (item.description.toLowerCase().includes(q)) return 20
+  if (t === q) return 100 + own
+  if (t.startsWith(q)) return 80 + own
+  if (t.split(/[:-]/).some((part) => part.startsWith(q))) return 60 + own
+  if (t.includes(q)) return 40 + own
+  if (item.description.toLowerCase().includes(q)) return 20 + own
   return 0
 }
 
