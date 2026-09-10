@@ -347,27 +347,25 @@ function menuFooter(l: string): boolean {
   return /\besc\b/i.test(l) && /\benter\b/i.test(l)
 }
 
-/** the first row of the unbroken run of text that `i` sits in */
-function groupTop(rows: string[], i: number): number {
-  let top = i
-  while (top > 0 && rows[top - 1]) top--
-  return top
-}
-
 /**
  * Some menus list their choices without numbers, so the highlight is the only thing marking them.
  *
  * A blank line inside such a menu is a group separator, not the end of it. `/mcp` prints six
  * servers under two headings, and stopping at the first gap offered three of them, so the last
- * three could not be picked at all. The choices therefore run from the marker's own group down
- * through every group after it, as far as the footer.
+ * three could not be picked at all.
+ *
+ * Everything here is worked out from the menu's own top edge rather than from where the highlight
+ * happens to be, and that is the whole point. Reading it from the marker meant the list changed
+ * shape as the user arrowed through it: entering the second group made the first group cease to
+ * exist, six choices became three, then two, and on the last row there was nothing left to find and
+ * the card removed itself. Where the highlight is decides which row is current, and nothing else.
  *
  * Telling a heading from a choice is the weak point, because the screen model has already thrown
- * the indentation away. The rule is positional and inferred from a single real `/mcp` capture:
- * when a menu has more than one group, the first row of each group is that group's heading. A
- * single-group menu keeps the older, narrower reading, choices from the marker downwards, so every
- * shape that already worked is untouched. What makes this safe to act on is not the rule but
- * `SlashRun`, which moves the highlight and checks where it landed before pressing return.
+ * the indentation away. Two rules, both inferred from a single real `/mcp` capture: a block of three
+ * or more groups opens with the menu's title rather than with choices, and in a block of several
+ * groups the first row of each is that group's heading. What makes this safe to act on is not the
+ * rules but `SlashRun`, which moves the highlight and reads back where it landed before pressing
+ * return.
  */
 function bareSelect(lines: string[]): Options | null {
   const rows = lines.map((l) => l.trim())
@@ -377,7 +375,7 @@ function bareSelect(lines: string[]): Options | null {
 
   const groups: number[][] = []
   let group: number[] = []
-  for (let i = groupTop(rows, marker.i); i < rows.length; i++) {
+  for (let i = blockTop(rows, marker.i); i < rows.length; i++) {
     const l = rows[i]
     if (!l) {
       if (group.length) groups.push(group)
@@ -391,14 +389,23 @@ function bareSelect(lines: string[]): Options | null {
   }
   if (group.length) groups.push(group)
 
-  const grouped = groups.length > 1
-  const picks = grouped ? groups.flatMap((g) => g.slice(1)) : (groups[0] ?? []).filter((i) => i >= marker.i)
+  // three groups or more and the first is the menu's own title, not choices under a heading
+  const body = groups.length >= 3 ? groups.slice(1) : groups
+  const grouped = body.length > 1
+  const only = body[0] ?? []
+  const picks = grouped
+    ? body.flatMap((g) => g.slice(1))
+    : // a question above the choices is not one of them, and ending in a question mark is the one
+      // sign of that which does not depend on where the highlight is
+      only.length && rows[only[0]].endsWith('?')
+      ? only.slice(1)
+      : only
   const cursor = picks.indexOf(marker.i)
   if (picks.length < 2 || cursor < 0) return null
   const label = (i: number): string => rows[i].replace(/^❯\s+/, '')
   // headings are kept as rows so the list can still be read, and left out of `options` so the
   // arrow keys cannot land on one
-  const drawn: MenuRow[] = (grouped ? groups.flat() : picks).map((i) => ({
+  const drawn: MenuRow[] = (grouped ? body.flat() : picks).map((i) => ({
     text: label(i),
     choice: picks.indexOf(i) < 0 ? null : picks.indexOf(i),
     row: i

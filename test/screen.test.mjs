@@ -205,6 +205,20 @@ test('a group heading is not a choice, and neither are the key hints under the m
   }
 })
 
+test('a menu does not change shape as the highlight walks through it', () => {
+  // Arrowing down the real /mcp menu used to shrink it: entering the second group made the first
+  // one cease to exist, six choices became three, then two, and on the last row there was nothing
+  // left to parse, so the card decided the command was over and removed itself.
+  const CHOICES = [9, 10, 11, 14, 15, 16]
+  for (const [want, on] of CHOICES.entries()) {
+    const screen = [...MCP, ...COMPOSER].map((l, i) => (i === on ? `❯ ${l.replace(/^❯\s+/, '')}` : l.replace(/^❯\s+/, '')))
+    const found = readOptions(screen.map(clean))
+    assert.equal(found?.options.length, 6, `six choices with the highlight on row ${on}`)
+    assert.equal(found.cursor, want, `the highlight on row ${on} is choice ${want}`)
+    assert.ok(readRun(screen, '/mcp', 0), 'and the run is still readable, so the card stays')
+  }
+})
+
 test('the headings are kept for reading and left out of what the arrow keys can land on', () => {
   const found = readOptions([...MCP, ...COMPOSER].map(clean))
   assert.deepEqual(

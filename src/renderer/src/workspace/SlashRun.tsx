@@ -8,6 +8,8 @@ const SETTLE_MS = 1_500
 const GRACE_MS = 8_000
 // how long the highlight is given to arrive where it was aimed before the pick is abandoned
 const AIM_MS = 2_500
+// how long a menu that has gone missing, or a hand on the arrow keys, holds off any verdict
+const HOLD_MS = 3_000
 
 /**
  * What the terminal is showing for one slash command, in the chat.
@@ -60,6 +62,8 @@ export function SlashRunCard({
   // which rows are choices and which are group headings, and a guess one row out would confirm a
   // different server than the one that was clicked. Aiming is reversible; return is not.
   const aim = useRef<{ index: number; label: string; at: number } | null>(null)
+  // when the user last drove this menu, so a card being stepped through is never concluded on
+  const touched = useRef(0)
   const poke = useRef<() => void>(() => {})
   const gone = useRef(onGone)
   gone.current = onGone
@@ -72,6 +76,9 @@ export function SlashRunCard({
     let seen = ''
     let skip = 0
     let wasDeep = 0
+    // once this command has answered with a menu it is an interaction, not a print, and the rules
+    // for a print stop applying to it
+    let sawMenu = false
     let shape = ''
     let stillSince = Date.now()
     let timer: ReturnType<typeof setInterval> | null = null
@@ -125,16 +132,30 @@ export function SlashRunCard({
       // options have to be gone before the card stops following. Picking one usually redraws into
       // another menu, and this is what keeps it following through that. It has to be a highlighted
       // menu: a numbered list in Claude's own prose parses the same way and would never end.
-      if (next?.options?.marked) return
+      if (next?.options?.marked) {
+        sawMenu = true
+        return
+      }
+      // A menu the user is stepping through never removes its own card. Reading a menu off a screen
+      // is best effort, and a frame it cannot place must cost a redraw, never the card: the parse
+      // used to fail on the last row of `/mcp` and the whole thing vanished mid-arrowing. So a menu
+      // that goes missing is given a moment to come back, and a hand on the keys stops any verdict
+      // at all.
+      if (sawMenu && Date.now() - touched.current < HOLD_MS) return
+      if (sawMenu && !next?.options && Date.now() - stillSince < HOLD_MS) return
       if (!next) {
         // nothing found yet, so keep looking: a command that has to think prints nothing at all
         // for a second or two before it prints anything
         if (Date.now() - started < GRACE_MS) return
         stop()
-        // A screen that ended up emptier than it started is what /clear leaves behind: the command
-        // did its job and took content with it. The terminal shows no answer afterwards, so the
-        // chat shows nothing either, rather than a stub.
-        if (contentDepth(screen.lines().map(clean)) < wasDeep) gone.current()
+        // A menu that was driven and is now gone leaves nothing to show: the interaction happened,
+        // was cancelled or taken, and the terminal is showing no answer to it. Saying the answer
+        // could not be read would be untrue, since it was read well enough to drive.
+        //
+        // Failing that, a screen that ended up emptier than it started is what /clear leaves
+        // behind. That test is only for commands that never opened a menu, where having less on
+        // the screen is the only sign that anything happened at all.
+        if (sawMenu || contentDepth(screen.lines().map(clean)) < wasDeep) gone.current()
         else setLost(true)
         return
       }
@@ -195,6 +216,7 @@ export function SlashRunCard({
 
   /** the terminal needs a moment to redraw before there is anything to read back */
   function soon(): void {
+    touched.current = Date.now()
     setTimeout(() => poke.current(), 150)
   }
 
