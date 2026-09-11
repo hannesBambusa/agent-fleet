@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Session, UsageLimit, UsageSnapshot } from '../../../shared/types'
 import { readPersisted, writePersisted } from './store'
-import { MIN_POINTS, project, rateOf, scaleOf, settle, stalled, type Burn, type Sample } from './burnRate'
+import { averageRate, MIN_POINTS, project, scaleOf, type Burn, type Sample } from './burnRate'
 import { advance, decay, QUIET_MS, type Seen } from './spend'
 
 // long enough to hold several of those whole-percent steps, which is what the coarse signal needs to
@@ -11,9 +11,6 @@ const WINDOW_MS = 45 * 60 * 1000
 // the persisted list stays small
 const EVERY_MS = 10 * 1000
 const KEY = 'usageSamples'
-// The ratio is a property of the account's plan, not of this window, so it is worth keeping: a fresh
-// start or a reset would otherwise spend its first twenty minutes unable to say anything.
-const SCALE_KEY = 'usageScale'
 // Where the ratio is measured from. Deliberately outside the 45 minute sample window: a slow burn
 // takes longer than that to move the window two whole points, and pruning the far end away is how a
 // quiet fleet would stay uncalibrated for ever.
@@ -59,7 +56,6 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
   const perHour = useRef(0)
   const lastTick = useRef(0)
   const lastSpend = useRef(0)
-  const known = useRef<number | null>(readPersisted<number | null>(SCALE_KEY, null))
   const anchor = useRef<Sample | null>(readPersisted<Sample | null>(ANCHOR_KEY, null))
   const [, bump] = useState(0)
 
@@ -109,36 +105,30 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
   // Everything is recomputed against the clock rather than against the last payload, so the needle
   // falls on its own when the agents stop: the arrival of a payload cannot be the thing that ends a
   // burn, because a stopped fleet sends none.
-  // a ratio measured now beats one remembered, but the remembered one is what makes the gauge useful
-  // in the first minutes after a start or a reset
-  const measured = scaleOf(anchor.current ? [anchor.current, ...samples.current] : samples.current)
-  if (measured !== null && measured !== known.current) {
-    known.current = measured
-    writePersisted(SCALE_KEY, measured)
-  }
-  const scale = measured ?? known.current
+  // Measured against this window and no other. A ratio carried over from the previous one is the
+  // thing that put the needle in the red 47 minutes after a reset: percentage points per token is
+  // only as good as the window it was fitted to, and a fresh window has its own answer within
+  // minutes. Until then the window's own average does the job without any calibration at all.
+  const scale = scaleOf(anchor.current ? [anchor.current, ...samples.current] : samples.current)
   const since = anchor.current ? now - anchor.current.at : 0
   const moved = anchor.current ? Math.max(0, limit.percent - anchor.current.pct) : 0
   const unitsPerHour = perHour.current
   const fine = scale !== null
-  const coarse = settle(samples.current, now, WINDOW_MS)
-  const slow = rateOf(coarse)
-  const rate = fine
-    ? scale * unitsPerHour
-    : stalled(coarse, now)
-      ? 0
-      : slow.perHour
+  const avg = averageRate(limit.percent, limit.resetsAt, now)
+  // no tokens being written means no spend, whatever an average over the last hour says
+  const rate = fine ? scale * unitsPerHour : unitsPerHour > 0 ? avg.perHour : 0
 
   return {
     ...project(limit.percent, rate, limit.resetsAt, now),
     // tokens are flowing, so this is not idle; it is a rate that cannot be quoted yet
-    warming: !fine && unitsPerHour > 0,
+    // only while the window is too young for even an average
+    warming: !fine && unitsPerHour > 0 && avg.perHour === 0,
     moved,
     // The first point is the only estimate of how long a point takes, and it is worth using: the
     // second one lands after roughly the same wait. Before it there is nothing to extrapolate from,
     // and a countdown invented from no data is the thing this whole gauge exists to avoid.
     eta: !fine && moved >= 1 && since > 0 ? (since / moved) * (MIN_POINTS - moved) : null,
-    spanMs: fine ? Math.min(now - (samples.current[0]?.at ?? now), WINDOW_MS) : slow.spanMs,
+    spanMs: fine ? Math.min(now - (samples.current[0]?.at ?? now), WINDOW_MS) : avg.spanMs,
     samples: samples.current,
     pct: limit.percent,
     fine

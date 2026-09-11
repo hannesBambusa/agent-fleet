@@ -208,7 +208,7 @@ function Burn({ burn }: { burn: BurnRate }): JSX.Element {
 /** The arithmetic, for anyone who wants to check the dial. */
 function titleOf(burn: BurnRate): string {
   const bar = burn.needRate !== null ? `redline ${burn.needRate.toFixed(1)}%/h` : 'no reset time known'
-  const from = burn.fine ? 'from the tokens being written' : "from the window's own whole-percent steps"
+  const from = burn.fine ? 'from the tokens being written' : 'as the average since this window opened'
   if (burn.warming) {
     const head = `working out what a token costs against this window: ${burn.moved} of ${MIN_POINTS} points so far`
     return burn.eta !== null

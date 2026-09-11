@@ -321,6 +321,16 @@ export function ChatView({
             >
               /clear
             </button>
+            {/* An agent that stops mid-task needs one word, and typing it is the whole interaction.
+                Disabled while it is working, where the word would just queue behind the turn. */}
+            <button
+              onClick={() => send('continue')}
+              disabled={busy}
+              title={busy ? 'it is still working' : 'tell it to carry on, if it stopped early'}
+              className="mono rounded border border-[var(--line)] px-2 py-1 text-[10.5px] text-[var(--muted)] hover:border-[var(--accent)]/50 hover:text-[var(--accent)] disabled:opacity-30 disabled:hover:border-[var(--line)] disabled:hover:text-[var(--muted)]"
+            >
+              ▸▸
+            </button>
           </div>
           {slashOpen && (
             <SlashMenu

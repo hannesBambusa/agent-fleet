@@ -133,3 +133,24 @@ export function scaleOf(samples: Sample[]): number | null {
   if (dp < MIN_MOVE || du <= 0) return null
   return dp / du
 }
+
+/** The five hour window's own length, which is what makes its start knowable from its end. */
+export const WINDOW_HOURS = 5
+
+/**
+ * The window's average rate since it opened.
+ *
+ * No calibration, no tokens, no samples: the percentage and the reset time are enough, and both
+ * arrive with the first payload. It is the average rather than the current rate, so it lags a burst
+ * and forgives a lull — but it cannot be wrong about the window it is describing, which is exactly
+ * what a ratio carried over from the previous window can be.
+ */
+export function averageRate(pct: number, resetsAt: string | null, now: number): { perHour: number; spanMs: number } {
+  if (!resetsAt) return { perHour: 0, spanMs: 0 }
+  const reset = Date.parse(resetsAt)
+  if (!reset) return { perHour: 0, spanMs: 0 }
+  const spanMs = now - (reset - WINDOW_HOURS * 3_600_000)
+  // the first minutes of a window round to nothing, and dividing by them invents a rate
+  if (spanMs < 10 * 60 * 1000) return { perHour: 0, spanMs: Math.max(0, spanMs) }
+  return { perHour: Math.max(0, pct) / (spanMs / 3_600_000), spanMs }
+}

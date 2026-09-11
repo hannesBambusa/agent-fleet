@@ -146,6 +146,9 @@ const api = {
     graph: (cwd: string, max?: number): Promise<GitCommit[]> => ipcRenderer.invoke('git:graph', cwd, max),
     log: (cwd: string): Promise<GitCommit[]> => ipcRenderer.invoke('git:log', cwd),
     mergePlan: (cwd: string): Promise<MergePlan | null> => ipcRenderer.invoke('git:mergePlan', cwd),
+    /** uncommitted counts for many checkouts at once, for the fleet cards */
+    dirty: (cwds: string[]): Promise<Record<string, { changed: number; staged: number }>> =>
+      ipcRenderer.invoke('git:dirty', cwds),
     merge: (cwd: string): Promise<string> => ipcRenderer.invoke('git:merge', cwd),
     /** the other direction: the base branch's newer commits, merged into this worktree */
     update: (cwd: string): Promise<string> => ipcRenderer.invoke('git:update', cwd),

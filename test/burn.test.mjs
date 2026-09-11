@@ -16,7 +16,7 @@ await build({
   outfile: out,
   logLevel: 'error'
 })
-const { rateOf, project, settle, stalled, scaleOf } = await import(`file://${out}`).then((m) => m.default ?? m)
+const { rateOf, project, settle, stalled, scaleOf, averageRate } = await import(`file://${out}`).then((m) => m.default ?? m)
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -177,4 +177,22 @@ test('one whole point of movement is a rounding error, not a ratio', () => {
     { at: 5 * MIN, pct: 21, units: 9_000 }
   ]
   assert.equal(scaleOf(s), null)
+})
+
+// The window's own average, which needs no calibration and cannot belong to a different window.
+test('the average comes from the percentage and the reset time alone', () => {
+  const now = Date.parse('2026-09-11T12:00:00Z')
+  // resets in 4h, so the window opened an hour ago; 8% in that hour
+  const r = averageRate(8, '2026-09-11T16:00:00Z', now)
+  assert.ok(Math.abs(r.perHour - 8) < 0.01)
+})
+
+test('the first minutes of a window are not a rate', () => {
+  const now = Date.parse('2026-09-11T12:00:00Z')
+  // resets in 4h 55m: the window is five minutes old
+  assert.equal(averageRate(1, '2026-09-11T16:55:00Z', now).perHour, 0)
+})
+
+test('no reset time, no average', () => {
+  assert.equal(averageRate(50, null, Date.now()).perHour, 0)
 })

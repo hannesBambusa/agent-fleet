@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { GitBranch, GitCommit, GitCommitDetail, GitFile, GitStatus } from '../../shared/types'
 import { baseOf, git, isRepo, upstreamState } from './exec'
 
@@ -231,4 +233,48 @@ export async function branches(cwd: string): Promise<GitBranch[]> {
         subject
       }
     })
+}
+
+/** What is uncommitted in a checkout: the number the fleet cards carry. */
+export interface Dirty {
+  changed: number
+  staged: number
+}
+
+/**
+ * Uncommitted counts for many checkouts at once.
+ *
+ * One porcelain call each, run together, because the fleet asks about every agent on a timer and
+ * anything heavier than a status would put a dozen git processes on a three second clock. A
+ * directory that is not a repository, or has gone away with its worktree, answers nothing rather
+ * than throwing: the card simply shows no badge.
+ */
+export async function dirtyOf(cwds: string[]): Promise<Record<string, Dirty>> {
+  const out: Record<string, Dirty> = {}
+  await Promise.all(
+    [...new Set(cwds)].map(async (cwd) => {
+      // A worktree carries a `.git` file and a checkout a `.git` directory; neither means this is
+      // not a repository, and a stat is free where spawning git to find out is not. It also keeps a
+      // deleted worktree from answering "clean" instead of answering nothing.
+      if (!existsSync(join(cwd, '.git'))) return
+      const text = await git(cwd, ['status', '--porcelain', '-uall', '-z']).catch(() => null)
+      if (text === null) return
+      let changed = 0
+      let staged = 0
+      const parts = text.split('\0')
+      for (let i = 0; i < parts.length; i++) {
+        const entry = parts[i]
+        if (entry.length < 4) continue
+        const x = entry[0]
+        const y = entry[1]
+        if (x === 'R' || x === 'C') i += 1
+        // another agent's checkout is not this one's uncommitted work
+        if (inWorktrees(entry.slice(3).replace(/\/$/, ''))) continue
+        if (x !== ' ' && x !== '?') staged += 1
+        if (y !== ' ' || x === '?') changed += 1
+      }
+      out[cwd] = { changed, staged }
+    })
+  )
+  return out
 }

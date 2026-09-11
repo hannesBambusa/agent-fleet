@@ -5,6 +5,7 @@ import { buildGraph, CARD_H, CARD_W, edgePath, REPO_H, REPO_W } from './graph'
 import { repoColor } from '../lib/repoColor'
 import { ColorPicker } from './ColorPicker'
 import { useFlagged } from '../state/attention'
+import { useDirty, type Dirty } from '../state/dirty'
 
 interface Props {
   sessions: Session[]
@@ -27,6 +28,7 @@ function autoExpanded(sessions: Session[]): Set<string> {
 
 export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JSX.Element {
   const flagged = useFlagged()
+  const dirty = useDirty(sessions)
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
   const [picker, setPicker] = useState<string | null>(null)
   // repaint when a colour is chosen, since the mapping lives outside React
@@ -112,6 +114,7 @@ export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JS
             selected={n.s.id === selected}
             tint={repoColor(n.s.repoPath)}
             unread={flagged.get(n.s.id) ?? null}
+            dirty={dirty.get(n.s.cwd) ?? null}
             childCount={n.childCount}
             expanded={expanded.has(n.s.id)}
             onToggle={toggle}
@@ -124,6 +127,30 @@ export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JS
   )
 }
 
+/**
+ * Uncommitted work, on the card.
+ *
+ * The thing that goes wrong with many agents at once is losing track of which of them has written
+ * something that exists nowhere but its own working tree. Staged and unstaged are counted apart
+ * because they are one step apart in the flow, and a card is the only place the whole fleet is
+ * visible at once.
+ */
+function DirtyChip({ dirty }: { dirty: Dirty | null }): JSX.Element | null {
+  if (!dirty || dirty.changed + dirty.staged === 0) return null
+  const parts: string[] = []
+  if (dirty.changed) parts.push(`${dirty.changed} changed`)
+  if (dirty.staged) parts.push(`${dirty.staged} staged`)
+  return (
+    <span
+      className="lbl rounded px-1 py-0.5"
+      style={{ color: 'var(--warn)', background: 'color-mix(in srgb, var(--warn) 14%, transparent)' }}
+      title={`${parts.join(' · ')} · uncommitted, in this agent's checkout only`}
+    >
+      {dirty.changed + dirty.staged} open
+    </span>
+  )
+}
+
 function SessionCard({
   n: s,
   x,
@@ -132,6 +159,7 @@ function SessionCard({
   selected,
   tint,
   unread,
+  dirty,
   childCount,
   expanded,
   onToggle,
@@ -147,6 +175,8 @@ function SessionCard({
   /** flagged and not yet read: 'done' has news, 'waiting' is blocked on you */
   unread: 'waiting' | 'done' | null
   childCount: number
+  /** uncommitted work in this agent's own checkout, null while it is unknown */
+  dirty: Dirty | null
   expanded: boolean
   onToggle: (id: string) => void
   onSelect: (id: string) => void
@@ -172,6 +202,7 @@ function SessionCard({
             wt
           </span>
         )}
+        <DirtyChip dirty={dirty} />
         <span className="ml-auto shrink-0">
           <StateChip state={s.state} pulse={s.state === 'running'} />
         </span>

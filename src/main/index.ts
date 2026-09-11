@@ -31,6 +31,7 @@ import {
   push as gitPush,
   stage as gitStage,
   status as gitStatus,
+  dirtyOf as gitDirtyOf,
   unstage as gitUnstage
 } from './git'
 import { usage } from './usage'
@@ -236,6 +237,7 @@ function wireIpc(): void {
 
   ipcMain.handle('usage:read', () => usage())
   ipcMain.handle('git:status', (_, cwd: string) => gitStatus(cwd))
+  ipcMain.handle('git:dirty', (_, cwds: string[]) => gitDirtyOf(cwds))
   ipcMain.handle('git:push', (_, cwd: string) => gitPush(cwd))
   ipcMain.handle('files:saveImage', (_, bytes: Uint8Array, mime: string) => saveImage(bytes, mime))
   ipcMain.handle('files:pickImage', () => pickImage())

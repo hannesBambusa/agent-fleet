@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '../../../shared/types'
 import { age } from '../lib/format'
+import { useDirty } from '../state/dirty'
 import { repoColor } from '../lib/repoColor'
 import { ColorPicker } from './ColorPicker'
 import { useFlagged } from '../state/attention'
@@ -29,6 +30,7 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
   // which repo's colour is being chosen, and a repaint when one is, since the map lives outside React
   const [picking, setPicking] = useState<string | null>(null)
   const flagged = useFlagged()
+  const dirty = useDirty(sessions)
   const [, bump] = useState(0)
   useEffect(() => {
     const h = (): void => bump((n) => n + 1)
@@ -183,6 +185,21 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
                         )}
                       </span>
                     </span>
+                    {/* uncommitted work lives nowhere but this agent's tree, so it is worth a mark
+                        even at this width, where there is room for one number and nothing else */}
+                    {(() => {
+                      const d = dirty.get(s.cwd)
+                      const open = d ? d.changed + d.staged : 0
+                      return open ? (
+                        <span
+                          className="mono shrink-0 rounded px-1 text-[9px]"
+                          style={{ color: 'var(--warn)', background: 'color-mix(in srgb, var(--warn) 14%, transparent)' }}
+                          title={`${d!.changed} changed · ${d!.staged} staged · uncommitted here`}
+                        >
+                          {open}
+                        </span>
+                      ) : null
+                    })()}
                     <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{age(s.lastEventAt, now)}</span>
                   </button>
                 )
