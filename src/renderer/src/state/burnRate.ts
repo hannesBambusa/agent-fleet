@@ -33,6 +33,8 @@ const MIN_MOVE = 2
 /** whole points of the window the ratio needs before it means anything */
 export const MIN_POINTS = MIN_MOVE
 const MIN_SAMPLES = 3
+/** the shortest stretch a percentage-per-token ratio can honestly be fitted over */
+const MIN_FIT_MS = 10 * 60 * 1000
 
 /**
  * How fast the five hour window is being spent, and what that means.
@@ -131,6 +133,10 @@ export function scaleOf(samples: Sample[]): number | null {
   const du = (last.units ?? 0) - (first.units ?? 0)
   // two whole points is the least that carries a ratio rather than a rounding error
   if (dp < MIN_MOVE || du <= 0) return null
+  // And two points inside a few minutes is a rounding error with a short lever: the percentage is
+  // reported whole, so a step that happens to land early reads as a rate several times the truth.
+  // Five points an hour apart and five points three minutes apart are not the same measurement.
+  if (last.at - first.at < MIN_FIT_MS) return null
   return dp / du
 }
 

@@ -26,6 +26,9 @@ const color: Record<Session['state'], string> = {
 type View = 'chat' | 'terminal'
 
 const TIMELINE_KEY = 'agent-fleet.timelineHeight'
+// The compact height: one row of dots plus its heading. Dragging below the old floor lands here, so
+// a short pane becomes a strip rather than a squeezed set of lanes.
+const TIMELINE_COMPACT = 46
 const TIMELINE_MIN = 96
 const TERMINAL_MIN = 160
 const BROWSER_KEY = 'agent-fleet.browserWidth'
@@ -35,7 +38,7 @@ const AGENT_MIN = 380
 function readTimelineHeight(): number {
   try {
     const v = Number(localStorage.getItem(TIMELINE_KEY))
-    if (v >= TIMELINE_MIN) return v
+    if (v >= TIMELINE_COMPACT) return v
   } catch {
     // storage unavailable
   }
@@ -66,6 +69,8 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
   const [browserOn, setBrowserOn] = usePersisted<boolean>('rightPanelOpen', true)
   const [browserWidth, setBrowserWidth] = useState(readBrowserWidth)
   const [timelineH, setTimelineH] = useState(readTimelineHeight)
+  // the height to come back to when the strip is toggled off again
+  const lastTimeline = useRef(Math.max(TIMELINE_MIN, readTimelineHeight()))
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [boxH, setBoxH] = useState(0)
@@ -106,7 +111,24 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
   // the timeline grows upward from the bottom edge, so the drag reads from that edge
   const dragTimeline = (delta: number): void => {
     const max = Math.max(TIMELINE_MIN, boxH - TERMINAL_MIN)
-    setTimelineH(Math.min(max, Math.max(TIMELINE_MIN, dragFrom.current.timeline - delta)))
+    const want = dragFrom.current.timeline - delta
+    // Between the compact height and the height the lanes need there is nothing worth drawing, so
+    // the handle snaps past it: drag it small and it becomes the strip on its own.
+    const snapped = want < TIMELINE_MIN - 12 ? TIMELINE_COMPACT : Math.max(TIMELINE_MIN, want)
+    setTimelineH(Math.min(max, snapped))
+  }
+
+  /** Double click is the toggle: down to the strip, and back to whatever height it had before. */
+  const toggleTimeline = (): void => {
+    setTimelineH((h) => {
+      if (h > TIMELINE_COMPACT) {
+        lastTimeline.current = h
+        return TIMELINE_COMPACT
+      }
+      return lastTimeline.current
+    })
+    // the next paint carries the new height; persist from there rather than from the stale value
+    requestAnimationFrame(persistTimeline)
   }
   const persistTimeline = (): void => {
     try {
@@ -197,7 +219,8 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
         onStart={() => (dragFrom.current.timeline = timelineH)}
         onDrag={dragTimeline}
         onEnd={persistTimeline}
-        title="drag to resize the timeline"
+        onDoubleClick={toggleTimeline}
+        title="drag to resize · double click for the compact strip"
       />
       <div className="shrink-0 pb-3" style={{ height: Math.min(timelineH, Math.max(TIMELINE_MIN, boxH - TERMINAL_MIN)) }}>
         <Waterfall sessionId={s.id} items={s.transcript} now={now} height={Math.min(timelineH, Math.max(TIMELINE_MIN, boxH - TERMINAL_MIN))} />

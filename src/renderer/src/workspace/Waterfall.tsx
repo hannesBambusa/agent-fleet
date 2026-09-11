@@ -67,6 +67,8 @@ const AXIS = 16
 const HEADER = 22
 // breathing room under the lowest lane so the bars never sit on the window edge
 const FLOOR = 26
+// below this there is not enough room for a lane, an axis and a readable bar
+const LANES_MIN = 86
 
 function laneOf(tool: string): (typeof LANES)[number] {
   return LANES.find((l) => (l.tools as readonly string[]).includes(tool)) ?? LANES[LANES.length - 1]
@@ -86,6 +88,7 @@ export function Waterfall({
   const ref = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<number | null>(null)
   const [rangeIdx, setRangeIdx] = useState(1)
+
   // Claude Code flushes its transcript in bursts, so a call can be seconds old before it lands in
   // the log. The hooks fire the moment a tool starts and the moment it returns, which is what makes
   // this pane live rather than lagging.
@@ -127,6 +130,9 @@ export function Waterfall({
     [items]
   )
 
+  // No switch for this. The strip exists because the pane is short, so the pane's own height is the
+  // setting: drag the divider down, or double click it, and the lanes give way to one line of dots.
+  const strip = boxH < LANES_MIN
   const range = RANGES[rangeIdx]
   const earliest = allSpans.length ? allSpans[0].start : now
   const t0 = range.ms ? Math.max(earliest, now - range.ms) : earliest
@@ -152,8 +158,8 @@ export function Waterfall({
   const BAR_H = Math.max(8, Math.min(26, ROW - 8))
 
   return (
-    <div className="relative flex h-full shrink-0 flex-col px-5 pb-5 pt-1.5">
-      <div className="mb-1 flex items-baseline justify-between gap-4">
+    <div className={`relative flex h-full shrink-0 flex-col px-5 pt-1.5 ${strip ? 'pb-1' : 'pb-5'}`}>
+      <div className={`flex items-baseline justify-between gap-4 ${strip ? 'mb-0.5' : 'mb-1'}`}>
         <span className="lbl">
           timeline · {shown.length} tool calls{marks.length ? ` · ${marks.length} prompts` : ''}
         </span>
@@ -170,6 +176,9 @@ export function Waterfall({
         </span>
       </div>
 
+      {strip ? (
+        <Strip spans={shown} now={now} />
+      ) : (
       <div ref={ref} className="relative min-h-0 flex-1" style={{ height }} onMouseLeave={() => setHover(null)}>
         {/* axis: wall-clock labels, so the row lines up with what happened when */}
         <div className="absolute top-0" style={{ left: GUTTER, right: 0, height: AXIS }}>
@@ -253,8 +262,87 @@ export function Waterfall({
           <span className="absolute inset-y-0 right-0 w-px bg-[var(--accent)] opacity-70" />
         </div>
       </div>
+      )}
 
-      {active && <Tip s={active} left={pct(active.start)} color={laneOf(active.tool).color} />}
+      {!strip && active && <Tip s={active} left={pct(active.start)} color={laneOf(active.tool).color} />}
+    </div>
+  )
+}
+
+/**
+ * The same calls as one line of dots, coloured by what kind of work each was.
+ *
+ * Reads like the command bar above the chat on purpose: at a glance the shape says how the turn went
+ * — a run of green is a shell loop, a blue cluster is an edit pass, a long gap is thinking. What each
+ * dot was belongs in the tooltip, because a name per dot at this width is unreadable.
+ */
+function Strip({ spans, now }: { spans: Span[]; now: number }): JSX.Element {
+  const box = useRef<HTMLDivElement>(null)
+  const row = useRef<HTMLDivElement>(null)
+  const [hover, setHover] = useState<{ i: number; x: number } | null>(null)
+
+  useEffect(() => {
+    const el = box.current
+    if (el) el.scrollLeft = el.scrollWidth
+  }, [spans.length])
+
+  const at = hover ? spans[hover.i] : null
+  const gapOf = (i: number): number => (i > 0 ? spans[i].start - spans[i - 1].end : 0)
+
+  return (
+    <div ref={row} className="relative flex min-h-0 flex-1 items-center gap-2.5">
+      <div ref={box} className="min-w-0 flex-1 overflow-x-auto">
+        <div className="relative flex h-[11px] w-max items-center pr-[1px]">
+          <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[var(--line)]" aria-hidden />
+          {spans.map((s, i) => {
+            const lane = laneOf(s.tool)
+            const on = hover?.i === i
+            return (
+              <span
+                key={i}
+                onMouseEnter={(e) => {
+                  // the dots scroll in their own box, so the tooltip is placed against the row
+                  const dot = e.currentTarget.getBoundingClientRect()
+                  const bounds = row.current?.getBoundingClientRect()
+                  if (bounds) setHover({ i, x: dot.left + dot.width / 2 - bounds.left })
+                }}
+                onMouseLeave={() => setHover((h) => (h?.i === i ? null : h))}
+                className="relative flex h-[11px] w-[13px] shrink-0 cursor-default items-center justify-center"
+              >
+                <span
+                  className="rounded-full transition-transform"
+                  style={{
+                    width: s.open ? 7 : 5,
+                    height: s.open ? 7 : 5,
+                    background: lane.color,
+                    opacity: on || s.open ? 1 : 0.75,
+                    transform: on ? 'scale(1.5)' : undefined,
+                    boxShadow: s.open ? `0 0 6px ${lane.color}` : '0 0 0 2px var(--ink)'
+                  }}
+                />
+              </span>
+            )
+          })}
+        </div>
+      </div>
+
+      <span className="mono shrink-0 text-[9px] text-[var(--dim)]">{spans.length}</span>
+
+      {at && hover && (
+        <div
+          style={{ left: Math.max(80, Math.min(hover.x, (row.current?.clientWidth ?? 400) - 80)) }}
+          className="pointer-events-none absolute bottom-[calc(100%-2px)] z-40 -translate-x-1/2 max-w-[340px] rounded border border-[var(--line)] bg-[var(--panel)] px-2 py-1 shadow-xl"
+        >
+          <div className="mono truncate text-[11px]" style={{ color: laneOf(at.tool).color }}>
+            {at.tool}
+          </div>
+          <div className="mono truncate text-[9px] text-[var(--dim)]">
+            {at.open ? 'still running' : dur(at.end - at.start)} · {clock(new Date(at.start).toISOString())}
+            {gapOf(hover.i) > 2000 ? ` · ${dur(gapOf(hover.i))} idle before` : ''}
+          </div>
+          {at.text && <div className="mono mt-0.5 truncate text-[9.5px] text-[var(--muted)]">{at.text}</div>}
+        </div>
+      )}
     </div>
   )
 }

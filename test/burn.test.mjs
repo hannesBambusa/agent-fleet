@@ -222,3 +222,18 @@ test('a swing beyond four times its own typical is not trusted', () => {
 test('without a token history of its own, the plain average stands', () => {
   assert.equal(shaped(12, 3_000_000, 0), 12)
 })
+
+// A window reports whole percents, so two points three minutes apart is a rounding error with a
+// short lever: it once read 700%/h and "full 4h 49m early" on a window three minutes old.
+test('a ratio needs a long enough stretch, not just enough movement', () => {
+  const quick = [
+    { at: 0, pct: 1, units: 0 },
+    { at: 3 * MIN, pct: 6, units: 900_000 }
+  ]
+  assert.equal(scaleOf(quick), null)
+  const slow = [
+    { at: 0, pct: 1, units: 0 },
+    { at: 40 * MIN, pct: 6, units: 12_000_000 }
+  ]
+  assert.ok(scaleOf(slow) > 0)
+})

@@ -121,11 +121,17 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
   const watched = watching.current ? now - watching.current : 0
   const unitsAvg = watched > 5 * 60 * 1000 ? spent.current / (watched / 3_600_000) : 0
   // no tokens being written means no spend, whatever an average over the last hour says
-  const rate = fine
-    ? capped(scale * unitsPerHour, avg.perHour)
-    : unitsPerHour > 0
-      ? shaped(avg.perHour, unitsPerHour, unitsAvg)
-      : 0
+  // Nothing is projected until the window itself can vouch for an average. A five hour outcome
+  // cannot be read off three minutes: the percentage has barely moved off zero, so any ratio fitted
+  // to it has a lever long enough to put the needle anywhere.
+  const rate =
+    avg.perHour <= 0
+      ? 0
+      : fine
+        ? capped(scale * unitsPerHour, avg.perHour)
+        : unitsPerHour > 0
+          ? shaped(avg.perHour, unitsPerHour, unitsAvg)
+          : 0
 
   return {
     ...project(limit.percent, rate, limit.resetsAt, now),
