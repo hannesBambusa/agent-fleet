@@ -114,7 +114,9 @@ export function Canvas({ sessions, selected, now, onSelect, onOpen }: Props): JS
             selected={n.s.id === selected}
             tint={repoColor(n.s.repoPath)}
             unread={flagged.get(n.s.id) ?? null}
-            dirty={dirty.get(n.s.cwd) ?? null}
+            // a subagent works in its parent's checkout, so the same open files on its card would
+            // read as a second pile of uncommitted work
+            dirty={n.s.parentId ? null : (dirty.get(n.s.cwd) ?? null)}
             childCount={n.childCount}
             expanded={expanded.has(n.s.id)}
             onToggle={toggle}

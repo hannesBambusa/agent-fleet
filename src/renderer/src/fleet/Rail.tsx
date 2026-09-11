@@ -188,7 +188,8 @@ export function Rail({ sessions, opened, now, onOpen, onFleet }: Props): JSX.Ele
                     {/* uncommitted work lives nowhere but this agent's tree, so it is worth a mark
                         even at this width, where there is room for one number and nothing else */}
                     {(() => {
-                      const d = dirty.get(s.cwd)
+                      // a subagent shares its parent's checkout; one pile of open files, one card
+                      const d = s.parentId ? undefined : dirty.get(s.cwd)
                       const open = d ? d.changed + d.staged : 0
                       return open ? (
                         <span
