@@ -130,6 +130,37 @@ export async function merge(cwd: string): Promise<string> {
 }
 
 /**
+ * Bring the base branch's newer commits into this worktree's branch.
+ *
+ * The opposite direction to everything else here, and the one that stops a long-lived agent branch
+ * drifting: commits that landed in main after the branch was cut are merged in, so the eventual
+ * merge back is against code that already agrees. Run in the worktree, on its own branch, and only
+ * with a clean tree, because a merge that hits uncommitted work leaves a mess the agent will keep
+ * editing on top of.
+ */
+export async function updateFromBase(cwd: string): Promise<string> {
+  const branch = (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  const base = await baseOf(cwd, branch)
+  if (!base) throw new Error('no base branch to update from')
+  const dirty = await dirtyPaths(cwd)
+  if (dirty.length) throw new Error(`${dirty.length} uncommitted file(s) here; commit them before updating from ${base}`)
+  const behind = Number((await git(cwd, ['rev-list', '--count', `HEAD..${base}`])).trim()) || 0
+  if (!behind) return `already up to date with ${base}`
+  try {
+    await git(cwd, ['merge', '--no-edit', base])
+    return `merged ${behind} commit(s) from ${base} into ${branch}`
+  } catch (err) {
+    const conflicts = await git(cwd, ['diff', '--name-only', '--diff-filter=U']).catch(() => '')
+    await git(cwd, ['merge', '--abort']).catch(() => '')
+    const list = conflicts.split('\n').filter(Boolean)
+    if (list.length) {
+      throw new Error(`conflicts in ${list.length} file(s), nothing changed: ${list.slice(0, 5).join(', ')}`)
+    }
+    throw err
+  }
+}
+
+/**
  * Everything this worktree changed against its base, committed or not, as one patch. This is the
  * whole point of the "apply" path: a merge can only move commits, and an agent's most recent work
  * is usually still sitting in its working tree.

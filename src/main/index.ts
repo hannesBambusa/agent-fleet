@@ -21,6 +21,7 @@ import {
   applyChanges as gitApply,
   applyPlan as gitApplyPlan,
   merge as gitMerge,
+  updateFromBase as gitUpdateFromBase,
   publish as gitPublish,
   pullRequestUrl as gitPullRequestUrl,
   ship as gitShip,
@@ -254,6 +255,7 @@ function wireIpc(): void {
   ipcMain.handle('git:log', (_, cwd: string) => gitLog(cwd))
   ipcMain.handle('git:mergePlan', (_, cwd: string) => gitMergePlan(cwd))
   ipcMain.handle('git:merge', (_, cwd: string) => gitMerge(cwd))
+  ipcMain.handle('git:update', (_, cwd: string) => gitUpdateFromBase(cwd))
   ipcMain.handle('git:publish', (_, cwd: string) => gitPublish(cwd))
   ipcMain.handle('seed:plan', (_, repoPath: string, worktree: string) => seedPlan(repoPath, worktree))
   ipcMain.handle('seed:apply', (_, repoPath: string, worktree: string, items: SeedItem[]) =>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ShipEvent, ShipPlan, ShipResult, ShipStep } from '../../../shared/types'
+import type { GitStatus, MergePlan, ShipEvent, ShipPlan, ShipResult, ShipStep } from '../../../shared/types'
+import { Pipeline } from './Pipeline'
 
 /**
  * The one path from "the agent is done" to "origin has it".
@@ -19,7 +20,22 @@ const PLAN_STEP: ShipStep = {
   state: 'run'
 }
 
-export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): JSX.Element {
+interface Props {
+  cwd: string
+  onDone: () => void
+  /** the agent's own tree, the checkout it merges into, and the merge itself: the three the band draws */
+  wt: GitStatus | null
+  host: GitStatus | null
+  plan: MergePlan | null
+  worktree: boolean
+  busy: string | null
+  onStage: () => void
+  onCommit: () => void
+  onMerge: () => void
+  onUpdate: () => void
+}
+
+export function ShipPane({ cwd, onDone, wt, host, plan: merge, worktree, busy, onStage, onCommit, onMerge, onUpdate }: Props): JSX.Element {
   const [plan, setPlan] = useState<ShipPlan | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
@@ -82,11 +98,35 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
     }
   }
 
+  const band = (
+    <Pipeline
+      wt={wt}
+      host={host}
+      plan={merge}
+      worktree={worktree}
+      busy={busy}
+      onStage={onStage}
+      onCommit={onCommit}
+      onMerge={onMerge}
+      onUpdate={onUpdate}
+    />
+  )
+
   if (loading && !plan) {
-    return <div className="flex h-full items-center justify-center text-[11px] text-[var(--dim)]">reading the repository…</div>
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {band}
+        <div className="flex flex-1 items-center justify-center text-[11px] text-[var(--dim)]">reading the repository…</div>
+      </div>
+    )
   }
   if (!plan) {
-    return <div className="flex h-full items-center justify-center text-[11px] text-[var(--dim)]">nothing to ship from here</div>
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {band}
+        <div className="flex flex-1 items-center justify-center text-[11px] text-[var(--dim)]">nothing to ship from here</div>
+      </div>
+    )
   }
 
   const needsMessage = plan.dirty.length > 0
@@ -102,6 +142,7 @@ export function ShipPane({ cwd, onDone }: { cwd: string; onDone: () => void }): 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {band}
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
         <div className="mb-3 flex items-baseline gap-2">
           <span className="mono text-[12px] text-[var(--accent)]">{plan.branch}</span>

@@ -230,6 +230,10 @@ export interface GitStatus {
   unpushed: number
   unpushedCommits: GitCommit[]
   behind: number
+  /** commits the base branch has that this one does not, which is what "the worktree is stale" means */
+  behindBase: number
+  /** the commits this branch adds on top of its base: the work that still has to be merged back */
+  aheadCommits: GitCommit[]
   staged: GitFile[]
   unstaged: GitFile[]
   committed: GitFile[]

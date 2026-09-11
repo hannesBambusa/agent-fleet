@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TranscriptItem } from '../../../shared/types'
 import { clock, dur } from '../lib/format'
 
@@ -84,18 +84,8 @@ export function Waterfall({
   sessionId: string
 }): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
-  const [px, setPx] = useState(600)
   const [hover, setHover] = useState<number | null>(null)
   const [rangeIdx, setRangeIdx] = useState(1)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const ro = new ResizeObserver(([e]) => setPx(e.contentRect.width))
-    ro.observe(el)
-    setPx(el.getBoundingClientRect().width)
-    return () => ro.disconnect()
-  }, [])
-
   // Claude Code flushes its transcript in bursts, so a call can be seconds old before it lands in
   // the log. The hooks fire the moment a tool starts and the moment it returns, which is what makes
   // this pane live rather than lagging.
@@ -213,7 +203,10 @@ export function Waterfall({
           </span>
         ))}
 
-        <div className="absolute" style={{ left: GUTTER, right: 0, top: AXIS, bottom: 0 }}>
+        {/* a call that began before the visible range still has to be drawn, and its own left edge is
+            off the scale: clipped here as well as clamped below, because an absolutely positioned bar
+            has no ancestor to stop it painting across the rest of the window */}
+        <div className="absolute overflow-hidden" style={{ left: GUTTER, right: 0, top: AXIS, bottom: 0 }}>
           {/* every prompt is a milestone: the work to its right is the answer to it */}
           {marks.map((m, i) => (
             <span key={`m${i}`} className="absolute inset-y-0" style={{ left: `${pct(m.at)}%` }} title={m.text}>
@@ -231,32 +224,29 @@ export function Waterfall({
 
           {shown.map((s, i) => {
             const lane = laneOf(s.tool)
-            const left = pct(s.start)
+            // it runs from before the window, so it starts at the edge and says so by losing the
+            // rounding on that side
+            const cut = s.start < t0
+            const left = pct(Math.max(s.start, t0))
             const width = Math.max(0.2, pct(s.end) - left)
-            const wpx = Math.max(MIN_BAR, (width / 100) * (px - GUTTER))
             const on = hover === i
             return (
               <div
                 key={i}
                 onMouseEnter={() => setHover(i)}
-                className="absolute flex cursor-default items-center overflow-hidden rounded-[3px] px-1"
+                className="absolute cursor-default rounded-[3px]"
                 style={{
                   left: `${left}%`,
                   width: `max(${width}%, ${MIN_BAR}px)`,
                   top: rowOf(s.tool) * ROW + (ROW - BAR_H) / 2,
                   height: BAR_H,
                   background: lane.color,
+                  borderTopLeftRadius: cut ? 0 : undefined,
+                  borderBottomLeftRadius: cut ? 0 : undefined,
                   opacity: on ? 1 : s.open ? 0.95 : 0.72,
                   boxShadow: on ? '0 0 0 1.5px var(--fg)' : undefined
                 }}
-              >
-                {wpx > 54 && (
-                  <span className="mono truncate text-[8.5px] leading-none text-[var(--ink)]">
-                    {s.tool}
-                    {wpx > 120 ? ` · ${s.text}` : ''}
-                  </span>
-                )}
-              </div>
+              />
             )
           })}
 

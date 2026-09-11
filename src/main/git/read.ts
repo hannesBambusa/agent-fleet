@@ -3,6 +3,16 @@ import { baseOf, git, isRepo, upstreamState } from './exec'
 
 // Read-only queries: safe to call on a timer, and the git pane does exactly that.
 
+/**
+ * The agents' own checkouts, which the parent repository sees as plain untracked directories.
+ *
+ * Counting them as uncommitted work makes a clean main checkout report five dirty files and makes
+ * every warning about "changes in the main checkout" meaningless, which is worse than saying nothing.
+ */
+function inWorktrees(path: string): boolean {
+  return path === '.claude/worktrees' || path.startsWith('.claude/worktrees/')
+}
+
 function label(code: string): string {
   switch (code) {
     case 'M':
@@ -39,9 +49,11 @@ export async function status(cwd: string): Promise<GitStatus | null> {
     if (entry.length < 4) continue
     const x = entry[0]
     const y = entry[1]
-    let path = entry.slice(3)
+    const path = entry.slice(3)
     // a rename is followed by its old path in the next NUL-separated field
     if (x === 'R' || x === 'C') i += 1
+    // a nested worktree stays a single directory entry even under -uall, hence the trailing slash
+    if (inWorktrees(path.replace(/\/$/, ''))) continue
     if (x === '?' && y === '?') {
       unstaged.push({ path, status: 'untracked', letter: '?', staged: false, committed: false })
       continue
@@ -54,10 +66,16 @@ export async function status(cwd: string): Promise<GitStatus | null> {
   const committed: GitFile[] = []
   let base: string | null = null
   let ahead = 0
+  // the other direction: work that landed in the base branch after this one was cut. Merging later
+  // against a stale branch is where the conflicts come from, so it is worth saying out loud.
+  let behindBase = 0
+  let aheadCommits: GitCommit[] = []
   try {
     base = await baseOf(cwd, branch)
     if (base) {
       ahead = Number((await git(cwd, ['rev-list', '--count', `${base}..HEAD`])).trim()) || 0
+      behindBase = Number((await git(cwd, ['rev-list', '--count', `HEAD..${base}`])).trim()) || 0
+      if (ahead > 0) aheadCommits = await commits(cwd, `${base}..HEAD`)
       if (ahead > 0) {
         const names = await git(cwd, ['diff', '--name-status', `${base}...HEAD`])
         for (const line of names.split('\n')) {
@@ -88,6 +106,8 @@ export async function status(cwd: string): Promise<GitStatus | null> {
     unpushed,
     unpushedCommits,
     behind: up.behind,
+    behindBase,
+    aheadCommits,
     ahead,
     staged: staged.sort(sort),
     unstaged: unstaged.sort(sort),

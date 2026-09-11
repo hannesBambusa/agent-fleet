@@ -5,6 +5,7 @@ import { History } from './History'
 import { Branches } from './Branches'
 import { ShipPane } from './ShipPane'
 import { SeedBand } from './SeedBand'
+import { SimpleView } from './SimpleView'
 import { age } from '../lib/format'
 import { usePersistedOneOf } from '../state/persist'
 
@@ -45,6 +46,11 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
   const [message, setMessage] = useState('')
   const [committing, setCommitting] = useState(false)
   const [status, setStatus] = useState<GitStatus | null>(null)
+  // The checkout the work has to end up in. A worktree cannot answer whether its branch landed there
+  // or whether that checkout has pushed, and being unable to see it is what makes work feel lost.
+  const [host, setHost] = useState<GitStatus | null>(null)
+  /** the agent's own tree, kept regardless of which checkout the tabs below are showing */
+  const [wt, setWt] = useState<GitStatus | null>(null)
   // status is null both before the first answer and when there is no repository; only this tells
   // the two apart, and without it the pane sits on "reading git status…" forever
   const [noRepo, setNoRepo] = useState(false)
@@ -52,10 +58,16 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
   const [sel, setSel] = useState<Selection | null>(null)
   const [diff, setDiff] = useState('')
   const seq = useRef(0)
+  const msgRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+  // Two ways to read the same repository: guided, which answers "what do I do now", and the full
+  // pane, which answers "what exactly is going on". The first is the one that stops a worktree
+  // losing work; the second is the one that explains it.
+  const [mode, setMode] = usePersistedOneOf<'simple' | 'advanced'>('gitMode', ['simple', 'advanced'], 'simple')
+  // ship leads: the question a worktree raises first is where the work stands, not which lines moved
   const [tab, setTab] = usePersistedOneOf<'changes' | 'ship' | 'history' | 'branches'>(
     'gitTab',
-    ['changes', 'ship', 'history', 'branches'],
-    'changes'
+    ['ship', 'changes', 'history', 'branches'],
+    'ship'
   )
   const [confirmPush, setConfirmPush] = useState(false)
   const [pushing, setPushing] = useState(false)
@@ -77,14 +89,22 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const s = await window.api.git.status(view)
+      // Both checkouts, every tick, whichever one the lists happen to be showing: the pipeline is
+      // about the journey between them, so it cannot be driven by whatever the tabs are pointed at.
+      const [w, h] = await Promise.all([
+        window.api.git.status(cwd),
+        isWorktree ? window.api.git.status(repoPath).catch(() => null) : Promise.resolve(null)
+      ])
+      setWt(w)
+      setHost(h)
+      const s = view === cwd ? w : h
       setStatus(s)
       setNoRepo(s === null)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [view])
+  }, [view, cwd, isWorktree, repoPath])
 
   useEffect(() => {
     if (tab === 'ship' && target !== 'worktree') setTab('changes')
@@ -275,6 +295,21 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     }
   }
 
+  /** The other direction: what main gained since this branch was cut. */
+  async function update(): Promise<void> {
+    setMerging(true)
+    setPushMsg(null)
+    try {
+      setPushMsg({ text: await window.api.git.update(cwd), ok: true })
+      await refresh()
+      reload()
+    } catch (err) {
+      setPushMsg({ text: err instanceof Error ? err.message : String(err), ok: false })
+    } finally {
+      setMerging(false)
+    }
+  }
+
   async function push(): Promise<void> {
     if (!confirmPush) {
       setConfirmPush(true)
@@ -310,6 +345,66 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
       </div>
     )
   }
+  const modeBar = (
+    <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[var(--line)] px-3">
+      <span className="mono truncate text-[11px] text-[var(--accent)]">{wt?.branch ?? status?.branch ?? '—'}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-1">
+        {(['simple', 'advanced'] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            title={m === 'simple' ? 'where the work is, and the next step' : 'every file, commit, branch and diff'}
+            className={`lbl rounded px-1.5 py-0.5 ${
+              mode === m ? 'bg-[var(--accent-soft)] !text-[var(--accent)]' : 'hover:!text-[var(--fg)]'
+            }`}
+          >
+            {m === 'simple' ? 'guided' : 'everything'}
+          </button>
+        ))}
+      </span>
+    </div>
+  )
+
+  if (mode === 'simple') {
+    return (
+      <div className="flex h-full w-full min-w-0 max-w-[1080px] flex-1 flex-col bg-[var(--panel)]">
+        {modeBar}
+        <SimpleView
+          wt={wt}
+          host={host}
+          plan={plan}
+          worktree={isWorktree}
+          busy={merging ? 'merging…' : pushing ? 'pushing…' : committing ? 'committing…' : null}
+          message={message}
+          onMessage={setMessage}
+          onStage={() => void window.api.git.stage(cwd, (wt?.unstaged ?? []).map((f) => f.path)).then(refresh)}
+          onCommit={() => {
+            if (message.trim()) void doCommit()
+          }}
+          onMerge={() => void merge()}
+          onUpdate={() => void update()}
+          onFile={(f) => {
+            // the diff lives in the full pane, so opening one takes the reader there
+            setMode('advanced')
+            setTarget('worktree')
+            setTab('changes')
+            setSel({ path: f.path, staged: f.staged, untracked: f.letter === '?' })
+          }}
+        />
+        {pushMsg && (
+          <div
+            className={`mono shrink-0 truncate border-t border-[var(--line)] px-4 py-1.5 text-[10.5px] ${
+              pushMsg.ok ? 'text-[var(--muted)]' : 'text-[var(--danger)]'
+            }`}
+            title={pushMsg.text}
+          >
+            {pushMsg.text}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const empty = status && !counts.staged && !counts.unstaged && !counts.committed
 
   return (
@@ -317,6 +412,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     // Left aligned rather than centred, so the column stays where the eye already is when the panel
     // is resized and the pane does not appear to drift.
     <div className="flex h-full w-full min-w-0 max-w-[1080px] flex-1 flex-col bg-[var(--panel)]">
+      {modeBar}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--line)] px-3">
         <span className="lbl">branch</span>
         <span className="mono truncate text-[11px]">{status?.branch ?? '—'}</span>
@@ -425,7 +521,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
 
       <div className="flex shrink-0 items-center gap-0 border-b border-[var(--line)] px-2">
         {((isWorktree && target === 'worktree'
-          ? (['changes', 'ship', 'history', 'branches'] as const)
+          ? (['ship', 'changes', 'history', 'branches'] as const)
           : (['changes', 'history', 'branches'] as const)) as readonly typeof tab[]).map((t) => (
           <button
             key={t}
@@ -496,6 +592,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
       {tab === 'changes' && !!counts.staged && (
         <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] px-3 py-2">
           <input
+            ref={(el) => (msgRef.current = el)}
             className="field min-w-0 flex-1"
             placeholder={`commit ${counts.staged} staged file(s) in ${target === 'repo' ? 'the main checkout' : 'this worktree'}…`}
             value={message}
@@ -567,7 +664,28 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
 
       <div className="min-h-0 flex-1">
         {tab === 'ship' ? (
-          <ShipPane cwd={cwd} onDone={() => void refresh()} />
+          <ShipPane
+            cwd={cwd}
+            onDone={() => void refresh()}
+            wt={wt}
+            host={host}
+            plan={plan}
+            worktree={isWorktree}
+            busy={merging ? 'merging…' : pushing ? 'pushing…' : committing ? 'committing…' : null}
+            onStage={() => {
+              setTarget('worktree')
+              void window.api.git.stage(cwd, (wt?.unstaged ?? []).map((f) => f.path)).then(refresh)
+            }}
+            onCommit={() => {
+              setTab('changes')
+              setTarget('worktree')
+              // the message is the one thing only a person can supply, so the button lands the cursor in it
+              if (!message.trim()) msgRef.current?.focus()
+              else void doCommit()
+            }}
+            onMerge={() => void merge()}
+            onUpdate={() => void update()}
+          />
         ) : tab === 'history' ? (
           <History cwd={view} />
         ) : tab === 'branches' ? (

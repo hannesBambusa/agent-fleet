@@ -147,6 +147,8 @@ const api = {
     log: (cwd: string): Promise<GitCommit[]> => ipcRenderer.invoke('git:log', cwd),
     mergePlan: (cwd: string): Promise<MergePlan | null> => ipcRenderer.invoke('git:mergePlan', cwd),
     merge: (cwd: string): Promise<string> => ipcRenderer.invoke('git:merge', cwd),
+    /** the other direction: the base branch's newer commits, merged into this worktree */
+    update: (cwd: string): Promise<string> => ipcRenderer.invoke('git:update', cwd),
     publish: (cwd: string): Promise<string> => ipcRenderer.invoke('git:publish', cwd),
     shipPlan: (cwd: string): Promise<ShipPlan> => ipcRenderer.invoke('git:shipPlan', cwd),
     ship: (cwd: string, message: string): Promise<ShipResult> => ipcRenderer.invoke('git:ship', cwd, message),
