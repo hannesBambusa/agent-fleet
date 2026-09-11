@@ -16,7 +16,7 @@ await build({
   outfile: out,
   logLevel: 'error'
 })
-const { rateOf, project, settle, stalled, scaleOf, averageRate } = await import(`file://${out}`).then((m) => m.default ?? m)
+const { rateOf, project, settle, stalled, scaleOf, averageRate, capped, shaped } = await import(`file://${out}`).then((m) => m.default ?? m)
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -195,4 +195,30 @@ test('the first minutes of a window are not a rate', () => {
 
 test('no reset time, no average', () => {
   assert.equal(averageRate(50, null, Date.now()).perHour, 0)
+})
+
+// A ratio fitted to mismatched counters lands orders of magnitude out, and that number is the one
+// the "you will run out" alarm is drawn from.
+test('the token rate is capped against what the window has actually seen', () => {
+  assert.equal(capped(260, 11.7), 11.7 * 4)
+  assert.equal(capped(20, 11.7), 20, 'a real burst runs several times the average and is left alone')
+})
+
+test('with no average to check against, the token rate stands', () => {
+  assert.equal(capped(30, 0), 30)
+})
+
+// An average cannot fall when the agents stop, and that is the one thing the gauge is watched for.
+test('the average bends with how busy the fleet is now', () => {
+  // spending half the tokens per hour this load has averaged reads as half the burn
+  assert.equal(shaped(12, 500_000, 1_000_000), 6)
+  assert.equal(shaped(12, 2_000_000, 1_000_000), 24)
+})
+
+test('a swing beyond four times its own typical is not trusted', () => {
+  assert.equal(shaped(12, 90_000_000, 1_000_000), 48)
+})
+
+test('without a token history of its own, the plain average stands', () => {
+  assert.equal(shaped(12, 3_000_000, 0), 12)
 })

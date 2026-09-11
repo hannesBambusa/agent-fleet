@@ -75,6 +75,9 @@ test('one lump does not peg the needle', () => {
   assert.ok(r < 4_000_000, `a single message must not read as a sustained rate, got ${r}`)
 })
 
+// The smoothing is a trade: shorter, and the needle follows the work more closely but wobbles with
+// message timing. A message every half minute has to read as the same burn as a steady trickle, to
+// within the width of a needle.
 test('the same tokens read the same whether they land in one lump or spread out', () => {
   let lumpy = 0
   let smooth = 0
@@ -82,7 +85,7 @@ test('the same tokens read the same whether they land in one lump or spread out'
     lumpy = decay(lumpy, i % 30 === 0 ? 30_000 : 0, 1000)
     smooth = decay(smooth, 1000, 1000)
   }
-  assert.ok(Math.abs(lumpy - smooth) / smooth < 0.2)
+  assert.ok(Math.abs(lumpy - smooth) / smooth < 0.3, `lumpy ${lumpy | 0} vs smooth ${smooth | 0}`)
 })
 
 test('it falls towards zero when the tokens stop', () => {

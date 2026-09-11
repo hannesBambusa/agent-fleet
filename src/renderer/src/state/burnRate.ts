@@ -154,3 +154,36 @@ export function averageRate(pct: number, resetsAt: string | null, now: number): 
   if (spanMs < 10 * 60 * 1000) return { perHour: 0, spanMs: Math.max(0, spanMs) }
   return { perHour: Math.max(0, pct) / (spanMs / 3_600_000), spanMs }
 }
+
+/**
+ * A ceiling on the token-derived rate, in terms of what the window itself has seen.
+ *
+ * A real burst runs several times the average, so the cap is loose. What it rules out is the order
+ * of magnitude: any ratio fitted to mismatched counters lands far above this, and a number that
+ * wrong is worse than no number, because it is the one the alarm is drawn from.
+ */
+export const BURST = 4
+
+export function capped(fine: number, average: number): number {
+  if (average <= 0) return fine
+  return Math.min(fine, average * BURST)
+}
+
+
+/** How far above its own recent typical a burst is allowed to read, before the shape is suspect. */
+const SWING = 4
+
+/**
+ * The window average, bent by how busy the fleet is right now.
+ *
+ * An average cannot fall when the agents stop, which is the one thing the gauge is watched for. The
+ * ratio between the current token rate and the token rate this load has seen on average is unit-free
+ * — no calibration needed — and applying it to the average gives a number that both belongs to this
+ * window and moves with the work. Half your usual token rate reads as half your usual burn.
+ */
+export function shaped(averagePct: number, unitsNow: number, unitsAverage: number): number {
+  if (averagePct <= 0) return 0
+  if (unitsAverage <= 0) return averagePct
+  const swing = Math.min(SWING, unitsNow / unitsAverage)
+  return averagePct * swing
+}

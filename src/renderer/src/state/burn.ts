@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Session, UsageLimit, UsageSnapshot } from '../../../shared/types'
-import { readPersisted, writePersisted } from './store'
-import { averageRate, MIN_POINTS, project, scaleOf, type Burn, type Sample } from './burnRate'
+import { averageRate, capped, MIN_POINTS, project, scaleOf, shaped, type Burn, type Sample } from './burnRate'
 import { advance, decay, QUIET_MS, type Seen } from './spend'
 
 // long enough to hold several of those whole-percent steps, which is what the coarse signal needs to
@@ -10,11 +9,11 @@ const WINDOW_MS = 45 * 60 * 1000
 // how often a sample is written down: often enough for a six minute measurement, rare enough that
 // the persisted list stays small
 const EVERY_MS = 10 * 1000
-const KEY = 'usageSamples'
-// Where the ratio is measured from. Deliberately outside the 45 minute sample window: a slow burn
-// takes longer than that to move the window two whole points, and pruning the far end away is how a
-// quiet fleet would stay uncalibrated for ever.
-const ANCHOR_KEY = 'usageAnchor'
+// Nothing here is persisted. The spend counter starts at zero every time the renderer loads and only
+// counts growth it has watched, so a sample written by an earlier load carries a number from a
+// different counter: 6 points of window against 300k units of "spend since the reload" fits a ratio
+// forty times too steep, and the needle goes through the stop. In-memory only, and the window's own
+// average covers the minutes until this load can fit its own ratio.
 
 /** The five hour window, which is the one that actually stops you working. */
 function sessionLimit(snap: UsageSnapshot | null): UsageLimit | null {
@@ -48,7 +47,7 @@ export interface BurnView extends Burn {
  * whole window, and the needle is that ratio applied to the last few minutes of tokens.
  */
 export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: number): BurnView | null {
-  const samples = useRef<Sample[]>(readPersisted<Sample[]>(KEY, []))
+  const samples = useRef<Sample[]>([])
   const seen = useRef<Seen>({})
   const spent = useRef(0)
   // the live rate, recomputed on every tick rather than averaged over a window, so the needle is
@@ -56,7 +55,11 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
   const perHour = useRef(0)
   const lastTick = useRef(0)
   const lastSpend = useRef(0)
-  const anchor = useRef<Sample | null>(readPersisted<Sample | null>(ANCHOR_KEY, null))
+  // when this load started counting, which is what makes an average token rate of its own possible
+  const watching = useRef(0)
+  // where the ratio is measured from: the first sample of this window, kept outside the 45 minute
+  // pruning so a slow burn still accumulates its two points
+  const anchor = useRef<Sample | null>(null)
   const [, bump] = useState(0)
 
   useEffect(() => {
@@ -67,6 +70,7 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
     spent.current += moved.delta
 
     const tick = Date.now()
+    if (!watching.current) watching.current = tick
     if (lastTick.current) {
       perHour.current = decay(perHour.current, moved.delta, tick - lastTick.current)
       if (moved.delta > 0) lastSpend.current = tick
@@ -87,7 +91,6 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
     // the anchor is only ever set once per window; everything after it is measured against it
     if (!anchor.current || limit.percent < anchor.current.pct) {
       anchor.current = { at, pct: limit.percent, units: spent.current }
-      writePersisted(ANCHOR_KEY, anchor.current)
     }
     if (last && at - last.at < EVERY_MS && limit.percent === last.pct) return
     // Payloads are written by whichever session last drew its status line, and a stale one can report
@@ -95,7 +98,6 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
     // backwards is noise and is held rather than recorded as negative burn.
     const pct = last && limit.percent < last.pct && last.pct - limit.percent <= 5 ? last.pct : limit.percent
     samples.current = [...samples.current, { at, pct, units: spent.current }].filter((s) => at - s.at <= WINDOW_MS)
-    writePersisted(KEY, samples.current)
     bump((n) => n + 1)
   }, [snap, sessions, now])
 
@@ -115,8 +117,15 @@ export function useBurn(snap: UsageSnapshot | null, sessions: Session[], now: nu
   const unitsPerHour = perHour.current
   const fine = scale !== null
   const avg = averageRate(limit.percent, limit.resetsAt, now)
+  // this load's own average token rate, which is what the current one is judged against
+  const watched = watching.current ? now - watching.current : 0
+  const unitsAvg = watched > 5 * 60 * 1000 ? spent.current / (watched / 3_600_000) : 0
   // no tokens being written means no spend, whatever an average over the last hour says
-  const rate = fine ? scale * unitsPerHour : unitsPerHour > 0 ? avg.perHour : 0
+  const rate = fine
+    ? capped(scale * unitsPerHour, avg.perHour)
+    : unitsPerHour > 0
+      ? shaped(avg.perHour, unitsPerHour, unitsAvg)
+      : 0
 
   return {
     ...project(limit.percent, rate, limit.resetsAt, now),

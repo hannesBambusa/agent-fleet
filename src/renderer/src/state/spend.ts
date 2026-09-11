@@ -43,9 +43,9 @@ export function advance(seen: Seen, sessions: Array<{ id: string; tokens: TokenU
 // of thousands at once and then nothing for half a minute, so a literal per-second rate alternates
 // between the stop and zero. A decaying average is measured every second and answers the same
 // question - how fast right now - without inventing a spike out of message timing.
-export const TAU_MS = 75 * 1000
+export const TAU_MS = 60 * 1000
 // Nothing written for this long and the needle goes to zero outright rather than trailing off.
-export const QUIET_MS = 90 * 1000
+export const QUIET_MS = 60 * 1000
 
 /**
  * The spend rate, decayed towards whatever the last moment actually spent.
