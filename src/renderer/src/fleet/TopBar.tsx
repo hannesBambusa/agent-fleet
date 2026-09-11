@@ -86,7 +86,7 @@ export function TopBar({
           </button>
         </div>
       </div>
-      <UsageStrip snap={usage} session={contextSession} now={now} />
+      <UsageStrip snap={usage} session={contextSession} sessions={sessions} now={now} />
     </div>
   )
 }

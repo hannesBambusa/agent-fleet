@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | in progress |
 | **Branch** | `main` |
-| **Updated** | 2026-09-09 |
+| **Updated** | 2026-09-11 |
 | **Scope** | Electron + TypeScript Mac app that observes every Claude Code session on the machine and launches new ones, each with its own worktree, branch and embedded browser. M1 observer and M2 launched agents built; M3 diff pane next. |
 
 Planned 2026-09-08 from an interview with Hannes. Scaffold built the same day. Paths under
@@ -105,6 +105,7 @@ Planned 2026-09-08 from an interview with Hannes. Scaffold built the same day. P
 
 ## Gotchas
 
+- **The usage payload stops arriving when the fleet stops.** `snapshot.fetchedAt` only advances while some session draws its status line, so with no agent running the burn samples never grow, nothing ages out of the window, and a rate computed on payload arrival stays frozen at whatever the last busy minutes measured. The rate is now recomputed against the clock every tick, with the silence since the last sample written in as a flat point and ten minutes without a step up read as stopped. `src/renderer/src/state/burnRate.ts` (`settle`, `stalled`), `src/renderer/src/state/burn.ts`
 - **`win.maximize()` shows a window created with `show: false`.** Called at construction it puts the empty frame on screen for as long as the renderer takes to load, which is the flash `show: false` plus `ready-to-show` exists to avoid (measured: visible 67 ms before `ready-to-show` on an empty page, and the real renderer bundle is 1.2 MB). Maximizing inside the `ready-to-show` handler, just before `show()`, is still before the window is visible, so there is no resize jump either. `src/main/index.ts`
 - **A programmatic `setBounds()` fires neither `resized` nor `moved` on macOS**, so those handlers cannot be exercised from a script; `maximize()` and `unmaximize()` do fire both their own event and `resized`. `src/main/window/state.ts`
 - **Tailwind 3 pinned, not 4.** `tailwindcss@4` drops the `tailwind.config.js` + postcss flow used here; pnpm nags about 4.x being available. Stay on 3 until deliberately migrated. `package.json`

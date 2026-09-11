@@ -589,7 +589,15 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
               <Group title="staged changes" files={status.staged} sel={sel} onPick={setSel} onStage={stage} />
               <Group title="changes" files={status.unstaged} sel={sel} onPick={setSel} onStage={stage} />
               <Group
-                title={`committed on ${status.branch}`}
+                title={
+                  // The list alone cannot say whether these files ever left the worktree, which is
+                  // the question a reader actually has: committed here, merged into main, pushed.
+                  plan?.commits
+                    ? `committed · not in ${plan.into} yet`
+                    : plan
+                      ? `committed · in ${plan.into}${plan.baseUnpushed ? ` · ${plan.into} not pushed yet` : ' · pushed'}`
+                      : `committed on ${status.branch}`
+                }
                 files={status.committed}
                 sel={sel}
                 onPick={setSel}
@@ -715,23 +723,28 @@ function LandedBand({
   counts: { staged: number; unstaged: number; committed: number }
 }): JSX.Element {
   const loose = counts.staged + counts.unstaged
-  const merged = plan.merged && !loose
-  const tone = merged ? (plan.baseUnpushed ? 'var(--warn)' : 'var(--accent)') : 'var(--muted)'
+  // Two independent facts, and conflating them is what made this line lie: whether the commits have
+  // reached the base branch, and whether there is work here that is not committed at all. Staged
+  // files are not "nothing committed yet" when two commits already landed in main.
+  const pending = plan.commits > 0
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] px-3 py-1.5">
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--line)] px-3 py-1.5">
       <span className="mono shrink-0 text-[10px] text-[var(--dim)]">
         {plan.branch} → {plan.into || '?'}
       </span>
-      <span className="mono shrink-0 text-[11px]" style={{ color: tone }}>
-        {merged ? '✓ in ' + plan.into : plan.commits ? `${plan.commits} commit(s) not in ${plan.into}` : 'nothing committed yet'}
+      <span className="mono shrink-0 text-[11px]" style={{ color: pending ? 'var(--muted)' : 'var(--accent)' }}>
+        {pending ? `${plan.commits} commit(s) not in ${plan.into}` : `✓ nothing left to merge into ${plan.into}`}
       </span>
       {!!loose && (
-        <span className="mono shrink-0 text-[10px] text-[var(--muted)]">
-          · {loose} uncommitted file(s) {plan.merged ? 'since then' : 'here'}
+        <span className="mono shrink-0 text-[10px] text-[var(--warn)]">
+          · {loose} file(s) not committed yet
         </span>
       )}
-      {merged && (
-        <span className="mono ml-auto shrink-0 text-[10px]" style={{ color: plan.baseUnpushed ? 'var(--warn)' : 'var(--dim)' }}>
+      {!pending && (
+        <span
+          className="mono ml-auto shrink-0 text-[10px]"
+          style={{ color: plan.baseUnpushed ? 'var(--warn)' : 'var(--dim)' }}
+        >
           {plan.baseUnpushed
             ? `${plan.into} is ${plan.baseUnpushed} ahead of origin — still to push`
             : `${plan.into} matches origin`}

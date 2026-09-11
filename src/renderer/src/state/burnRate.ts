@@ -1,9 +1,13 @@
 export interface Sample {
   at: number
   pct: number
+  /** the fleet's cumulative spend at that moment, in the units of `spend.ts` */
+  units?: number
 }
 
 export interface Burn {
+  /** enough span and movement to mean something; below this the app says nothing rather than guessing */
+  measured: boolean
   /** percentage points of the window consumed per hour, at the rate of the last few minutes */
   perHour: number
   /** ms until the limit would be spent, or null when it is not moving */
@@ -20,9 +24,14 @@ export interface Burn {
   spanMs: number
 }
 
-// long enough to average out a burst, short enough to notice you have stopped working
-const WINDOW_MS = 30 * 60 * 1000
-const MIN_SPAN_MS = 90 * 1000
+// Claude Code reports the window as a whole number of percent, so the signal arrives as steps, not
+// as a curve. That sets the floor for what can honestly be measured: one step inside ninety seconds
+// would imply 40%/h, which is how a quiet session with two agents got told it would burn out.
+// Two steps and a few minutes is the least that carries information.
+const MIN_SPAN_MS = 8 * 60 * 1000
+const MIN_MOVE = 2
+/** whole points of the window the ratio needs before it means anything */
+export const MIN_POINTS = MIN_MOVE
 const MIN_SAMPLES = 3
 
 /**
@@ -50,9 +59,42 @@ export function rateOf(samples: Sample[]): { perHour: number; spanMs: number } {
     den += (xs[i] - mx) ** 2
   }
   const spanMs = samples[n - 1].at - first
-  if (den === 0 || spanMs < MIN_SPAN_MS) return { perHour: 0, spanMs }
+  const moved = ys[n - 1] - ys[0]
+  // not enough time, or not enough movement, to say anything: a rate invented from one step is worse
+  // than no rate, because it is believed
+  if (den === 0 || spanMs < MIN_SPAN_MS || moved < MIN_MOVE) return { perHour: 0, spanMs }
   // a negative slope means the window reset under us, which says nothing about the rate
   return { perHour: Math.max(0, num / den), spanMs }
+}
+
+// A payload is only written while something is drawing a status line, so silence is itself the
+// signal: no agent running means no fresh numbers, and a rate left frozen at whatever the last busy
+// minutes measured reads as a burn that stopped happening. A gap counts as flat, not as missing.
+const QUIET_MS = 90 * 1000
+// Whole-percent steps mean a stall can only be bounded, not measured: ten minutes without one puts
+// the rate under 6%/h, which is low enough against any plausible redline to call it stopped.
+export const IDLE_MS = 10 * 60 * 1000
+
+/** The samples inside the window, with the silence since the last one written in as flat. */
+export function settle(samples: Sample[], now: number, windowMs: number): Sample[] {
+  const live = samples.filter((s) => now - s.at <= windowMs)
+  const newest = live[live.length - 1] ?? samples[samples.length - 1]
+  if (!newest) return []
+  // Sitting idle past the whole window would otherwise drop every sample and leave nothing to
+  // measure, which reads as "no data" when it means the opposite: the last known level has simply
+  // held. It is carried forward as the floor of the window so the answer stays "flat", not "unknown".
+  if (!live.length) return [{ at: now - windowMs, pct: newest.pct }, { at: now, pct: newest.pct }]
+  if (now - newest.at <= QUIET_MS) return live
+  return [...live, { at: now, pct: newest.pct }]
+}
+
+/** Has the window stopped moving? The last step up is the only thing that dates a burn. */
+export function stalled(samples: Sample[], now: number): boolean {
+  if (samples.length < 2) return true
+  for (let i = samples.length - 1; i > 0; i--) {
+    if (samples[i].pct > samples[i - 1].pct) return now - samples[i].at > IDLE_MS
+  }
+  return true
 }
 
 export function project(pct: number, perHour: number, resetsAt: string | null, now: number): Burn {
@@ -61,6 +103,7 @@ export function project(pct: number, perHour: number, resetsAt: string | null, n
   const toCap = perHour > 0.5 ? (left / perHour) * 3_600_000 : null
   const capsFirst = toCap !== null && toReset !== null && toCap < toReset
   return {
+    measured: perHour > 0,
     perHour,
     toCap,
     toReset,
@@ -70,4 +113,23 @@ export function project(pct: number, perHour: number, resetsAt: string | null, n
     needRate: toReset && toReset > 0 ? left / (toReset / 3_600_000) : null,
     spanMs: 0
   }
+}
+
+/**
+ * Percentage points per unit of spend, measured rather than assumed.
+ *
+ * The window's own percentage is the only authority on what a token costs against the limit, and it
+ * is reported in whole numbers. Over a long enough span those steps add up to a usable ratio, and
+ * that ratio is what turns the fine signal into the same currency the redline is quoted in.
+ */
+export function scaleOf(samples: Sample[]): number | null {
+  const have = samples.filter((s) => s.units !== undefined)
+  if (have.length < 2) return null
+  const first = have[0]
+  const last = have[have.length - 1]
+  const dp = last.pct - first.pct
+  const du = (last.units ?? 0) - (first.units ?? 0)
+  // two whole points is the least that carries a ratio rather than a rounding error
+  if (dp < MIN_MOVE || du <= 0) return null
+  return dp / du
 }

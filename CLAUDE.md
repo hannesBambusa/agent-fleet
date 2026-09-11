@@ -91,6 +91,10 @@ Then restart the app.
 - **The agent name becomes a directory** under `.claude/worktrees`, so it is slugged before use.
 - **Local servers are reachable from the user's normal browser.** The control server checks a per-run
   secret and refuses any request carrying `Origin` or `Referer`; keep both guards on anything new.
+- **A module that exports a hook cannot be tested.** `pnpm test` bundles the module under test with
+  esbuild, and importing React from a test fails. Keep pure logic in its own file (`slash.ts`,
+  `burnRate.ts`, `store.ts`, `verbIn.ts`) and let the hook file import it, rather than putting both
+  in one place and discovering it at the test.
 - **`belongsTo()` in the agent registry is the only place** that decides whether a transcript belongs
   to an agent. Three copies of that rule is what made agents appear twice.
 - **`app.getPath('userData')` differs between `pnpm dev` and a direct `electron out/main/index.js`**,

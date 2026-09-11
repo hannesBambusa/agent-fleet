@@ -3,18 +3,19 @@ import type { Agent, Session } from '../../../shared/types'
 import { BrowserPane } from '../browser/BrowserPane'
 import { GitPane } from '../git/GitPane'
 import { FilesPane } from '../files/FilesPane'
+import { DevPane } from './DevPane'
 import { onOpenLink } from '../state/openLink'
 import { onOpenFile } from '../state/openFile'
 import { usePersistedOneOf } from '../state/persist'
 import { Commands } from './Commands'
 
-type Tab = 'browser' | 'git' | 'files' | 'commands'
+type Tab = 'browser' | 'git' | 'files' | 'dev' | 'commands'
 
 // the browser is a native view, so only one of these may be mounted at a time: unmounting the
 // browser pane is what parks its Chromium view out of the way
 export function RightPanel({ s, agent, width }: { s: Session; agent: Agent | null; width: number }): JSX.Element {
   // the pane you last worked in, except that an agent without a browser cannot show one
-  const [saved, setTab] = usePersistedOneOf<Tab>('rightPanelTab', ['browser', 'git', 'files', 'commands'], 'git')
+  const [saved, setTab] = usePersistedOneOf<Tab>('rightPanelTab', ['browser', 'git', 'files', 'dev', 'commands'], 'git')
   const tab: Tab = saved === 'browser' && agent && !agent.browser ? 'git' : saved
 
   // a link clicked in the chat lands here: show the browser, then send it there. Navigating first
@@ -43,6 +44,9 @@ export function RightPanel({ s, agent, width }: { s: Session; agent: Agent | nul
         <TabButton on={tab === 'files'} onClick={() => setTab('files')}>
           files
         </TabButton>
+        <TabButton on={tab === 'dev'} onClick={() => setTab('dev')}>
+          dev
+        </TabButton>
         <TabButton on={tab === 'commands'} onClick={() => setTab('commands')}>
           commands{s.commands.length ? ` ${s.commands.length}` : ''}
         </TabButton>
@@ -54,6 +58,8 @@ export function RightPanel({ s, agent, width }: { s: Session; agent: Agent | nul
           <GitPane cwd={s.cwd} repoPath={s.repoPath} />
         ) : tab === 'files' ? (
           <FilesPane root={s.cwd} width={width} />
+        ) : tab === 'dev' ? (
+          <DevPane repoPath={s.repoPath} cwd={s.cwd} agentId={agent?.id ?? null} />
         ) : (
           <div className="h-full max-w-[520px] overflow-auto">
             {s.commands.length ? (

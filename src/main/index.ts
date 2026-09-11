@@ -37,6 +37,7 @@ import { catalog } from './catalog'
 import { Attention } from './attention'
 import { purge, purgePlan } from './agents/purge'
 import { labelFor, setLabel } from './sessions/labels'
+import { projectOf, servers as devServers, stop as stopDev } from './dev'
 import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
 import { listDir, readTextFile } from './files/browse'
@@ -137,6 +138,35 @@ function wireIpc(): void {
   ipcMain.handle('hooks:install', () => installHooks())
   ipcMain.handle('hooks:uninstall', () => uninstallHooks())
 
+  ipcMain.handle('browser:tabs', (_, agentId: string) => ({
+    tabs: browser.tabs(agentId),
+    active: browser.activeTab(agentId)
+  }))
+  ipcMain.handle('browser:newTab', (_, agentId: string, url?: string) => browser.newTab(agentId, url))
+  ipcMain.handle('browser:selectTab', (_, agentId: string, index: number) => browser.selectTab(agentId, index))
+  ipcMain.handle('browser:closeTab', (_, agentId: string, index: number) => browser.closeTab(agentId, index))
+  ipcMain.handle('browser:devtools', (_, agentId: string) => browser.devtools(agentId))
+  ipcMain.handle('browser:devtoolsOpen', (_, agentId: string) => browser.devtoolsOpen(agentId))
+  ipcMain.handle('browser:console', (_, agentId: string) => browser.consoleOf(agentId))
+  ipcMain.handle('browser:clearConsole', (_, agentId: string) => browser.clearConsole(agentId))
+  ipcMain.handle('dev:project', (_, dir: string) => projectOf(dir))
+  ipcMain.handle('dev:servers', (_, repoPath: string) => devServers(repoPath))
+  ipcMain.handle('dev:stop', (_, pgid: number) => stopDev(pgid))
+  // started through a pty, so its output is a terminal like any other and it dies with the app
+  ipcMain.handle('dev:start', (_, id: string, cwd: string, command: string, cols: number, rows: number) => {
+    ptys.spawn(id, { cwd, cols, rows, command })
+  })
+  /**
+   * A plain shell, for the things a person still does by hand.
+   *
+   * `alive` first, because the panel is opened and closed while the shell keeps running: reopening it
+   * must show the session you left, not start a second one on top of it.
+   */
+  ipcMain.handle('pty:open', (_, id: string, cwd: string, cols: number, rows: number) => {
+    if (ptys.alive(id)) return
+    ptys.spawn(id, { cwd, cols, rows, command: `${process.env['SHELL'] || '/bin/zsh'} -l` })
+  })
+  ipcMain.handle('pty:close', (_, id: string) => ptys.kill(id))
   ipcMain.handle('sessions:label', (_, sessionId: string) => labelFor(sessionId))
   ipcMain.handle('sessions:setLabel', (_, sessionId: string, label: SessionLabel) => {
     const saved = setLabel(sessionId, label)

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
@@ -11,6 +12,9 @@ import { seedAuto } from '../git/seed'
 import { placeHandoff } from '../files/handoff'
 
 const FILE = (): string => join(app.getPath('userData'), 'agents.json')
+// Somewhere to work when the task is not about a repository at all: a question, a scratch script, a
+// bit of research. Under ~/.claude so it sits with the app's other state and is easy to find.
+const SCRATCH = (): string => join(homedir(), '.claude', 'agent-fleet', 'scratch')
 const SCRIPTS = (): string => join(app.getPath('userData'), 'launch')
 
 /** tmux session name for a detached agent; short and unambiguous */
@@ -134,6 +138,12 @@ export class AgentRegistry extends EventEmitter {
   }
 
   launch(req: LaunchRequest, cols: number, rows: number): Agent {
+    // no repository chosen: give it a folder of its own rather than dropping it in a home directory
+    if (!req.repoPath) {
+      const dir = join(SCRATCH(), new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19))
+      mkdirSync(dir, { recursive: true })
+      req = { ...req, repoPath: dir, worktree: false }
+    }
     const sessionId = req.resumeSessionId ?? randomUUID()
     // the typed name becomes a directory under .claude/worktrees, so it is slugged like the fallback
     const titled = !!req.name.trim()

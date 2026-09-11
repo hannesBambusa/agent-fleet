@@ -7,28 +7,22 @@ import { ApprovalCard } from './Approval'
 import { termSize } from '../terminal/Terminal'
 import { Divider } from '../lib/Divider'
 import { useQuick } from '../state/quickCommands'
+import { usePersisted } from '../state/persist'
+import { usePtyActivity } from '../state/ptyActivity'
+import { usePtyVerb } from '../state/ptyVerb'
+import { ShellPanel } from './ShellPanel'
 import { toggleToolRows, useToolRows } from '../state/toolRows'
 import { SlashMenu, useCatalogItems } from './SlashMenu'
 import { Bubble } from './Bubble'
-import { CommandBar, CommandRail } from './CommandRail'
+import { CommandBar } from './CommandBar'
 import { Working } from './Working'
 import { toTurns, verbFor } from './turns'
 import { filterSlash, slashQuery } from './slash'
 import { annotate, collapse, lineDiff, summarise } from '../lib/lineDiff'
 import { highlight, langOf, type Token } from '../lib/highlight'
 
-// the command timeline down the right of the chat, and where its width is remembered
-const RAIL_KEY = 'agent-fleet.commandRail'
-const RAIL_MIN = 130
-
-function readRail(): number {
-  try {
-    const v = Number(localStorage.getItem(RAIL_KEY))
-    return v >= RAIL_MIN ? v : 190
-  } catch {
-    return 190
-  }
-}
+// long enough to bridge the gap between two redraws, short enough that the bar goes when work does
+const PTY_BUSY_MS = 3000
 
 export function ChatView({
   s,
@@ -99,7 +93,31 @@ export function ChatView({
   const startedFor = agent ? now - Date.parse(agent.createdAt) : 0
   const starting = empty && startedFor < 12_000
   // a session that has said nothing is not mid-turn, whatever the card's state says
-  const busy = s.state === 'running' && !empty
+  /**
+   * Working, judged by both things the app can see.
+   *
+   * The transcript is the truth about turns, and it is written in bursts: Claude Code can be running
+   * a long tool call, thinking, or printing "Processing… (5m 6s)" in its own terminal without adding
+   * a line for a while. The pty is the other half — that status line is real output, so a terminal
+   * that is animating is an agent that is working, whatever the last transcript line said.
+   *
+   * Either signal is enough. They disagreed before, and the chat looked finished while the terminal
+   * was clearly still going.
+   */
+  const ptyAt = usePtyActivity()
+  const lastPrint = agent ? (ptyAt.get(agent.id) ?? 0) : 0
+  // A Stop hook is Claude Code saying "that turn is over" in its own words. If one arrived after the
+  // last thing the terminal printed, the printing was the tail of a finished turn, not work.
+  const saidDone =
+    s.hookState?.state === 'idle' && Date.parse(s.hookState.at) >= lastPrint - PTY_BUSY_MS
+  const printing = lastPrint > now - PTY_BUSY_MS && !saidDone
+  const busy = !empty && (s.state === 'running' || printing)
+  // Claude Code's own word for what it is doing, read out of its terminal. Its list is longer than
+  // anything worth hardcoding, and seeing "Pondering" here while the terminal says "Mustering" reads
+  // as two different things happening.
+  const verbs = usePtyVerb()
+  const spoken = agent ? verbs.get(agent.id) : undefined
+  const said = spoken && now - spoken.at < PTY_BUSY_MS * 3 ? spoken.verb : null
   // the turn started at the last thing you said; that is the clock Claude Code shows too
   const turnStart = useMemo(() => {
     for (let i = s.transcript.length - 1; i >= 0; i--) {
@@ -133,6 +151,14 @@ export function ChatView({
    * the user can say what they want done with it before sending.
    */
   const [attaching, setAttaching] = useState(false)
+  // A shell of your own, beside the conversation. The agent has its own terminal; this is for the
+  // things you still do by hand — a git command, a log, a quick script — without leaving the app or
+  // reaching into the agent's session.
+  const [shellOpen, setShellOpen] = usePersisted<boolean>('chatShellOpen', false)
+  const [shellH, setShellH] = usePersisted<number>('chatShellHeight', 220)
+  const shellFrom = useRef(0)
+  const shellId = `shell:${agent?.id ?? s.id}`
+
   const openTools = useToolRows()
   // the slash menu: open whenever the draft is still just the command being typed
   const slashAll = useCatalogItems()
@@ -157,19 +183,6 @@ export function ChatView({
     // a command that takes something keeps the composer open; one that does not is ready to send
     setDraft(`/${item.token}${item.hint ? ' ' : ' '}`)
   }
-  const [railW, setRailW] = useState(readRail)
-  // the rail is a column when the chat can spare one, and a line across the top when it cannot
-  const [paneW, setPaneW] = useState(0)
-  const pane = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = pane.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => setPaneW(entry.contentRect.width))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-  const railFits = paneW === 0 || paneW >= 720
-  const railFrom = useRef(0)
   // what was attached, so the composer can show pictures instead of a wall of paths. The path still
   // goes into the draft: that is what Claude Code reads, and the user may want to edit around it.
   const [shots, setShots] = useState<Array<{ path: string; thumb: string | null }>>([])
@@ -237,9 +250,9 @@ export function ChatView({
   }
 
   return (
-    <div ref={pane} className="flex h-full min-w-0 bg-[var(--ink)]">
+    <div className="flex h-full min-w-0 bg-[var(--ink)]">
       <div className="flex min-w-0 flex-1 flex-col">
-        {!railFits && !!s.commands.length && <CommandBar list={s.commands} now={now} />}
+        {!!s.commands.length && <CommandBar list={s.commands} now={now} />}
       <div
         ref={box}
         onScroll={(e) => {
@@ -279,7 +292,7 @@ export function ChatView({
             tool={s.currentTool}
             elapsed={now - turnStart}
             produced={Math.max(0, s.tokens.output - baseOutput.current)}
-            verb={starting ? 'Starting Claude Code' : verbFor(turnStart)}
+            verb={starting ? 'Starting Claude Code' : (said ?? verbFor(turnStart))}
             waiting={waiting}
             sub={s.origin === 'subagent'}
             onInterrupt={agent && !waiting ? () => interrupt() : undefined}
@@ -420,6 +433,14 @@ export function ChatView({
                 </button>
               )}
               <button
+                onClick={() => setShellOpen(!shellOpen)}
+                title={shellOpen ? 'close the shell' : 'a shell of your own, in this agent\'s directory'}
+                className="lbl hover:!text-[var(--accent)]"
+                style={shellOpen ? { color: 'var(--accent)' } : undefined}
+              >
+                {shellOpen ? '▾ shell' : '▸ shell'}
+              </button>
+              <button
                 onClick={toggleToolRows}
                 role="switch"
                 aria-checked={openTools}
@@ -490,25 +511,21 @@ export function ChatView({
             )}
           </div>
         )}
+        {shellOpen && (
+          <>
+            <Divider
+              axis="y"
+              onStart={() => (shellFrom.current = shellH)}
+              onDrag={(d) => setShellH(Math.min(600, Math.max(120, shellFrom.current - d)))}
+              title="drag to resize the shell"
+            />
+            <div className="shrink-0" style={{ height: shellH }}>
+              <ShellPanel id={shellId} cwd={s.cwd} onClose={() => setShellOpen(false)} />
+            </div>
+          </>
+        )}
       </div>
       </div>
-      {railFits && !!s.commands.length && (
-        <>
-          <Divider
-            onStart={() => (railFrom.current = railW)}
-            onDrag={(d) => setRailW(Math.min(360, Math.max(RAIL_MIN, railFrom.current - d)))}
-            onEnd={() => {
-              try {
-                localStorage.setItem(RAIL_KEY, String(railW))
-              } catch {
-                // storage unavailable; the width just does not persist
-              }
-            }}
-            title="drag to resize the command timeline"
-          />
-          <CommandRail list={s.commands} now={now} width={railW} />
-        </>
-      )}
     </div>
   )
 }

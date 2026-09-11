@@ -487,3 +487,39 @@ export interface PurgeResult {
   done: string[]
   failed: string[]
 }
+
+/** What kind of project a directory holds, and how its dev server is started. */
+export interface DevProject {
+  dir: string
+  framework: string | null
+  /** the package.json script that runs it, if there is one */
+  script: string | null
+  manager: 'pnpm' | 'npm' | 'yarn' | 'bun'
+  command: string | null
+}
+
+/** A dev server running for this repository, in the main checkout or one of its worktrees. */
+export interface DevServer {
+  pid: number
+  /** the process group, which is what has to be killed: a wrapper spawns the real server */
+  pgid: number
+  cwd: string
+  /** the worktree it is running in, or null for the main checkout */
+  worktree: string | null
+  command: string
+  ports: number[]
+}
+
+/** One line the page logged, as Chromium reported it. */
+export interface ConsoleEntry {
+  level: string
+  text: string
+  at: string
+}
+
+/** One of an agent's browser tabs, as the strip draws it. */
+export interface BrowserTab {
+  url: string
+  title: string
+  loading: boolean
+}

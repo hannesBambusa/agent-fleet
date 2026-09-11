@@ -1,6 +1,7 @@
 import type { Session, UsageLimit, UsageSnapshot } from '../../../shared/types'
 import { dur, tokens } from '../lib/format'
-import { useBurn, type Burn as BurnRate } from '../state/burn'
+import { MIN_POINTS } from '../state/burnRate'
+import { useBurn, type BurnView as BurnRate } from '../state/burn'
 
 // Fallback only: used when no status-line payload has arrived for the session yet. Every current
 // model is 1M, and a live payload carries the real size anyway.
@@ -31,13 +32,16 @@ function label(l: UsageLimit): string {
 export function UsageStrip({
   snap,
   session,
+  sessions,
   now
 }: {
   snap: UsageSnapshot | null
   session: Session | null
+  /** every session the tailer knows, which is where the live token counts come from */
+  sessions: Session[]
   now: number
 }): JSX.Element | null {
-  const burn = useBurn(snap, now)
+  const burn = useBurn(snap, sessions, now)
   const limits = snap?.limits ?? []
   // the session's own status-line payload knows both numbers exactly; the transcript total is a guess
   const liveCtx = session ? snap?.contexts[session.id] : undefined
@@ -75,7 +79,9 @@ export function UsageStrip({
           </span>
         </span>
       )}
-      {burn && burn.spanMs > 0 && <Burn burn={burn} />}
+      {/* always on show once the window is known: a speed of zero is an answer, and a gauge that
+          vanishes when the fleet goes quiet is the moment you most want to see it reading zero */}
+      {burn && <Burn burn={burn} />}
       {limits.map((l) => (
         <Gauge
           key={l.key}
@@ -118,38 +124,101 @@ function Gauge({
 }
 
 /**
- * Whether the five hour window runs out before it resets.
+ * Whether the five hour window runs out before it resets, as a dial.
  *
- * The only question the rate answers that changes anything, so it is answered in one figure and one
- * colour: green means the window turns over before the limit does, red means it does not and says
- * when, grey means nothing is being spent. Everything behind it is on hover, where it costs no
- * space. Nothing at all is shown until there are enough samples to mean something.
+ * There is a speed the window can be spent at and still last: whatever is left, divided by the time
+ * until it resets. That rate is the redline, and it moves on its own as the window drains, so the
+ * only question worth a glance is which side of it the needle sits on. Inside the green, the work
+ * you start now finishes; past it, the tokens run out first.
  */
 function Burn({ burn }: { burn: BurnRate }): JSX.Element {
-  // below this a rate is noise: a poll landing either side of a token or two, not work
-  const idle = burn.perHour <= 0.5
-  const bad = burn.capsFirst
+  const W = 46
+  const H = 26
+  const cx = W / 2
+  const cy = H - 4
+  const r = 16
+
+  const idle = !burn.measured
+  const redline = burn.needRate ?? 0
+  // The redline is the end of the dial, so the needle reads as a fraction of what can be afforded:
+  // spending half of what the window allows puts it at half. Past the end there is nowhere to go,
+  // so it pegs and says so rather than quietly rescaling under you.
+  const full = Math.max(redline, 0.5)
+  const share = full > 0 ? burn.perHour / full : 0
+  const over = burn.capsFirst || share > 1
+  // Nothing under the redline is a problem, so nothing under it is painted as one: the only colour
+  // that means trouble is the needle's own. A red band inside the affordable range says "danger"
+  // while the words say "ok", and the picture is the half people believe.
+  const tone = burn.warming ? 'var(--accent)' : idle ? 'var(--dim)' : over ? 'var(--danger)' : share > 0.85 ? 'var(--warn)' : 'var(--accent)'
+
+  // a half turn, left to right
+  const at = (rate: number): number => Math.PI - Math.min(1, rate / full) * Math.PI
+  const pt = (rate: number, rad: number): [number, number] => {
+    const a = at(rate)
+    return [cx + Math.cos(a) * rad, cy - Math.sin(a) * rad]
+  }
+  const arc = (from: number, to: number): string => {
+    const [x1, y1] = pt(from, r)
+    const [x2, y2] = pt(to, r)
+    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`
+  }
+  // the needle is always on the dial, resting at zero when nothing is being spent: a gauge that
+  // disappears when the engine idles tells you nothing about whether it is idling
+  const [nx, ny] = pt(burn.perHour, r - 3)
+
   return (
-    <span
-      className="flex items-center gap-1.5"
-      title={
-        idle
-          ? `nothing spent in the last ${dur(burn.spanMs)}`
-          : `${burn.perHour.toFixed(1)}% of the 5 hour window per hour, over the last ${dur(burn.spanMs)}` +
-            (bad
-              ? ` · full ${dur(burn.earlyBy ?? 0)} before it resets`
-              : burn.needRate !== null
-                ? ` · it would take ${burn.needRate.toFixed(0)}%/h to run out first`
-                : '')
-      }
-    >
+    <span className="flex items-center gap-1.5" title={titleOf(burn)}>
       <span className="lbl">burn</span>
-      <span
-        className="mono text-[10px] font-medium"
-        style={{ color: idle ? 'var(--dim)' : bad ? 'var(--danger)' : 'var(--accent)' }}
-      >
-        {idle ? 'idle' : bad ? `full in ${dur(burn.toCap ?? 0)}` : 'ok'}
+      <svg width={W} height={H} className="shrink-0 overflow-visible" aria-hidden>
+        <path d={arc(0, full)} fill="none" stroke="var(--line)" strokeWidth={3} strokeLinecap="round" />
+        {/* how much of the allowance the current speed uses, swept from the left */}
+        {!idle && (
+          <path
+            d={arc(0, Math.min(burn.perHour, full))}
+            fill="none"
+            stroke={tone}
+            strokeOpacity={0.45}
+            strokeWidth={3}
+            strokeLinecap="round"
+          />
+        )}
+        <line
+          x1={cx}
+          y1={cy}
+          x2={nx}
+          y2={ny}
+          stroke={tone}
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          style={{ transition: 'all 600ms ease-out' }}
+        />
+        <circle cx={cx} cy={cy} r={2} fill={tone} />
+        {/* past the end of the dial: the needle is at the stop, and this says it is not the truth */}
+        {share > 1 && (
+          <polygon points={`${W - 1},${cy - r - 1} ${W + 4},${cy - r + 2} ${W - 1},${cy - r + 5}`} fill="var(--danger)" />
+        )}
+      </svg>
+      <span className="mono shrink-0 text-[10px]" style={{ color: tone }}>
+        {burn.warming ? (burn.eta !== null ? `measuring ${dur(burn.eta)}` : `measuring ${burn.moved}/2`) : idle ? 'idle' : burn.capsFirst ? `full ${dur(burn.earlyBy ?? 0)} early` : share > 0.85 ? 'tight' : 'ok'}
       </span>
     </span>
   )
+}
+
+/** The arithmetic, for anyone who wants to check the dial. */
+function titleOf(burn: BurnRate): string {
+  const bar = burn.needRate !== null ? `redline ${burn.needRate.toFixed(1)}%/h` : 'no reset time known'
+  const from = burn.fine ? 'from the tokens being written' : "from the window's own whole-percent steps"
+  if (burn.warming) {
+    const head = `working out what a token costs against this window: ${burn.moved} of ${MIN_POINTS} points so far`
+    return burn.eta !== null
+      ? `${head}, about ${dur(burn.eta)} to go at this pace · measured once, then remembered · ${bar}`
+      : `${head} · the first point is what sets the pace, so there is nothing to count down from yet · ${bar}`
+  }
+  if (!burn.measured) return `nothing being spent · ${bar}`
+  const head = `${burn.perHour.toFixed(1)}%/h of the 5 hour window ${from} · ${bar}`
+  if (burn.capsFirst) {
+    return `${head} · full in ${dur(burn.toCap ?? 0)}, which is ${dur(burn.earlyBy ?? 0)} before it resets`
+  }
+  return `${head} · inside the redline, so it lasts until the reset`
 }

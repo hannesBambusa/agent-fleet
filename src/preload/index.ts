@@ -7,6 +7,10 @@ import type {
   AttentionSettings,
   CatalogItem,
   BrowserState,
+  BrowserTab,
+  ConsoleEntry,
+  DevProject,
+  DevServer,
   DirEntry,
   FileContents,
   GitBranch,
@@ -89,6 +93,15 @@ const api = {
     onOpen: (cb: (sessionId: string) => void) => on<[string]>('attention:open', cb)
   },
 
+  // dev servers: what this project runs, what is already running, starting and stopping one
+  dev: {
+    project: (dir: string): Promise<DevProject | null> => ipcRenderer.invoke('dev:project', dir),
+    servers: (repoPath: string): Promise<DevServer[]> => ipcRenderer.invoke('dev:servers', repoPath),
+    stop: (pgid: number): Promise<{ ok: boolean; error: string | null }> => ipcRenderer.invoke('dev:stop', pgid),
+    start: (id: string, cwd: string, command: string, cols: number, rows: number): Promise<void> =>
+      ipcRenderer.invoke('dev:start', id, cwd, command, cols, rows)
+  },
+
   // the repositories the app knows about
   repos: {
     listRepos: (): Promise<Repo[]> => ipcRenderer.invoke('repos:list'),
@@ -117,6 +130,10 @@ const api = {
   // the terminal behind an agent
   pty: {
     history: (id: string): Promise<string> => ipcRenderer.invoke('pty:history', id),
+    // a shell of your own in a given directory; opening one that is already running is a no-op
+    open: (id: string, cwd: string, cols: number, rows: number): Promise<void> =>
+      ipcRenderer.invoke('pty:open', id, cwd, cols, rows),
+    close: (id: string): Promise<void> => ipcRenderer.invoke('pty:close', id),
     write: (id: string, data: string): void => ipcRenderer.send('pty:write', id, data),
     resize: (id: string, cols: number, rows: number): void => ipcRenderer.send('pty:resize', id, cols, rows),
     onData: (cb: (id: string, data: string) => void) => on<[string, string]>('pty:data', cb)
@@ -161,6 +178,15 @@ const api = {
     layout: (agentId: string | null, bounds: { x: number; y: number; width: number; height: number } | null): void =>
     ipcRenderer.send('browser:layout', agentId, bounds),
     state: (agentId: string): Promise<BrowserState | null> => ipcRenderer.invoke('browser:state', agentId),
+    console: (agentId: string): Promise<ConsoleEntry[]> => ipcRenderer.invoke('browser:console', agentId),
+    devtools: (agentId: string): Promise<boolean> => ipcRenderer.invoke('browser:devtools', agentId),
+    tabs: (agentId: string): Promise<{ tabs: BrowserTab[]; active: number }> =>
+      ipcRenderer.invoke('browser:tabs', agentId),
+    newTab: (agentId: string, url?: string): Promise<number> => ipcRenderer.invoke('browser:newTab', agentId, url),
+    selectTab: (agentId: string, index: number): Promise<void> => ipcRenderer.invoke('browser:selectTab', agentId, index),
+    closeTab: (agentId: string, index: number): Promise<void> => ipcRenderer.invoke('browser:closeTab', agentId, index),
+    devtoolsOpen: (agentId: string): Promise<boolean> => ipcRenderer.invoke('browser:devtoolsOpen', agentId),
+    clearConsole: (agentId: string): Promise<void> => ipcRenderer.invoke('browser:clearConsole', agentId),
     navigate: (agentId: string, url: string): Promise<void> => ipcRenderer.invoke('browser:navigate', agentId, url),
     back: (agentId: string): Promise<void> => ipcRenderer.invoke('browser:back', agentId),
     forward: (agentId: string): Promise<void> => ipcRenderer.invoke('browser:forward', agentId),

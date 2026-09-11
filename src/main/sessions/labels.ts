@@ -1,10 +1,13 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app } from 'electron'
 import type { SessionLabel } from '../../shared/types'
 
-const FILE = (): string => join(app.getPath('userData'), 'labels.json')
+// Beside the app's other state under ~/.claude rather than in Electron's userData, so this module
+// pulls in nothing from Electron: the session tailer imports it, and the tailer is plain logic that
+// has to stay testable without a browser or an app object.
+const DIR = join(homedir(), '.claude', 'agent-fleet')
+const FILE = (): string => join(DIR, 'labels.json')
 const TOPICS = join(homedir(), '.claude', 'topics')
 
 /**
@@ -41,6 +44,7 @@ export function setLabel(sessionId: string, label: SessionLabel): SessionLabel |
   else next[sessionId] = { name, note }
   cache = next
   try {
+    mkdirSync(DIR, { recursive: true })
     writeFileSync(FILE(), JSON.stringify(next, null, 2))
   } catch (err) {
     console.error('[labels] could not save', err)

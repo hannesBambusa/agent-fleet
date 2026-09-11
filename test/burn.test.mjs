@@ -16,7 +16,7 @@ await build({
   outfile: out,
   logLevel: 'error'
 })
-const { rateOf, project } = await import(`file://${out}`).then((m) => m.default ?? m)
+const { rateOf, project, settle, stalled, scaleOf } = await import(`file://${out}`).then((m) => m.default ?? m)
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -24,29 +24,66 @@ const HOUR = 60 * MIN
 const climb = (perHour, mins, from = 0) =>
   Array.from({ length: mins * 2 + 1 }, (_, i) => ({ at: i * 30_000, pct: from + (perHour * (i * 30_000)) / HOUR }))
 
+// what the app actually receives: the same climb reported as whole percentage points
+const stepped = (perHour, mins, from = 0) =>
+  climb(perHour, mins, from).map((s) => ({ ...s, pct: Math.floor(s.pct) }))
+
 test('a steady climb reports its own rate', () => {
-  const { perHour } = rateOf(climb(12, 10))
-  assert.ok(Math.abs(perHour - 12) < 0.01, `got ${perHour}`)
+  const { perHour } = rateOf(climb(12, 30))
+  assert.ok(Math.abs(perHour - 12) < 0.5, `got ${perHour}`)
+})
+
+test('a whole-percent signal is read correctly once it has moved enough', () => {
+  // the real feed: integers, so the rate can only be recovered over several steps
+  const { perHour } = rateOf(stepped(12, 30))
+  assert.ok(Math.abs(perHour - 12) < 2, `got ${perHour}`)
+})
+
+test('one step in a short window is not a rate', () => {
+  // 24% to 25% two minutes apart would read as 30%/h, which is how a quiet session was told it
+  // would burn out before the reset
+  const jump = [
+    { at: 0, pct: 24 },
+    { at: 60_000, pct: 24 },
+    { at: 120_000, pct: 25 }
+  ]
+  assert.equal(rateOf(jump).perHour, 0)
+})
+
+test('a long flat stretch reports nothing rather than a tiny rate', () => {
+  const flat = Array.from({ length: 60 }, (_, i) => ({ at: i * 30_000, pct: 24 }))
+  assert.equal(rateOf(flat).perHour, 0)
+})
+
+test('one step across half an hour is still not enough to extrapolate five hours from', () => {
+  const slow = Array.from({ length: 60 }, (_, i) => ({ at: i * 30_000, pct: i < 30 ? 24 : 25 }))
+  assert.equal(rateOf(slow).perHour, 0, 'one point of movement says too little')
 })
 
 test('too few samples, or too short a span, reports nothing rather than a guess', () => {
   assert.equal(rateOf([]).perHour, 0)
   assert.equal(rateOf([{ at: 0, pct: 1 }, { at: 1000, pct: 2 }]).perHour, 0)
-  // three samples but only a minute apart: not enough to extrapolate five hours from
   assert.equal(rateOf(climb(30, 1).slice(0, 3)).perHour, 0)
 })
 
 test('a burst at the end does not become the whole slope', () => {
-  const steady = climb(6, 20)
-  const withBurst = [...steady, { at: 20 * MIN + 30_000, pct: steady[steady.length - 1].pct + 4 }]
+  const steady = climb(6, 30)
+  const withBurst = [...steady, { at: 30 * MIN + 30_000, pct: steady[steady.length - 1].pct + 4 }]
   const { perHour } = rateOf(withBurst)
   // first-to-last would read about 18%/h here; least squares keeps it near the real trend
   assert.ok(perHour > 6 && perHour < 12, `got ${perHour}`)
 })
 
 test('a window that reset under us never reports a negative rate', () => {
-  const samples = [...climb(10, 10), { at: 11 * MIN, pct: 0 }]
+  const samples = [...climb(10, 30), { at: 31 * MIN, pct: 0 }]
   assert.ok(rateOf(samples).perHour >= 0)
+})
+
+test('an unmeasured rate projects nothing at all', () => {
+  const b = project(50, 0, new Date(2 * HOUR).toISOString(), 0)
+  assert.equal(b.measured, false)
+  assert.equal(b.toCap, null)
+  assert.equal(b.capsFirst, false)
 })
 
 test('the projection says when the limit runs out', () => {
@@ -84,3 +121,60 @@ test('when it is safe, it says what rate would not be', () => {
 })
 
 test.after(() => rmSync(dir, { recursive: true, force: true }))
+
+// A stopped fleet writes no status line, so the feed simply stops. The gauge has to fall on the
+// clock rather than wait for a payload that is never coming.
+test('silence since the last sample is measured as flat, not as the last rate', () => {
+  const s = stepped(20, 20)
+  const now = s[s.length - 1].at + 20 * MIN
+  const live = settle(s, now, 45 * MIN)
+  assert.equal(live[live.length - 1].at, now)
+  assert.equal(live[live.length - 1].pct, s[s.length - 1].pct)
+  assert.ok(rateOf(live).perHour < 20, 'a flat tail has to pull the rate down')
+})
+
+test('a fresh feed is left alone', () => {
+  const s = stepped(20, 20)
+  const now = s[s.length - 1].at + 30_000
+  assert.equal(settle(s, now, 45 * MIN).length, s.length)
+})
+
+test('ten minutes without a step up counts as stopped', () => {
+  const s = stepped(20, 20)
+  const last = s[s.length - 1].at
+  assert.equal(stalled(s, last + MIN), false)
+  assert.equal(stalled(s, last + 11 * MIN), true)
+})
+
+test('a window that never moved is stopped, not slow', () => {
+  const flat = Array.from({ length: 20 }, (_, i) => ({ at: i * 30_000, pct: 4 }))
+  assert.equal(stalled(flat, 10 * MIN), true)
+})
+
+test('idling past the whole window still reads as flat, not as no data', () => {
+  const s = stepped(20, 20)
+  const now = s[s.length - 1].at + 2 * HOUR
+  const live = settle(s, now, 20 * MIN)
+  assert.equal(live.length, 2, 'the last known level is carried forward')
+  assert.equal(live[0].pct, live[1].pct)
+  assert.equal(rateOf(live).perHour, 0)
+  assert.equal(stalled(live, now), true)
+})
+
+test('the scale is measured from the percentage the window reports', () => {
+  // 10 points of the window over 100k units of spend
+  const s = [
+    { at: 0, pct: 20, units: 0 },
+    { at: 10 * MIN, pct: 25, units: 50_000 },
+    { at: 20 * MIN, pct: 30, units: 100_000 }
+  ]
+  assert.ok(Math.abs(scaleOf(s) - 10 / 100_000) < 1e-9)
+})
+
+test('one whole point of movement is a rounding error, not a ratio', () => {
+  const s = [
+    { at: 0, pct: 20, units: 0 },
+    { at: 5 * MIN, pct: 21, units: 9_000 }
+  ]
+  assert.equal(scaleOf(s), null)
+})
