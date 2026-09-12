@@ -64,6 +64,7 @@ export async function mergePlan(cwd: string): Promise<MergePlan | null> {
     fastForward: false,
     merged: false,
     baseUnpushed: 0,
+    hostDirty: [],
     at: null
   }
   if (!into) {
@@ -98,9 +99,15 @@ export async function mergePlan(cwd: string): Promise<MergePlan | null> {
   }
   plan.at = host.path
 
-  const hostDirty = (await git(host.path, ['status', '--porcelain', '-uno'])).trim()
-  if (hostDirty) {
-    plan.reason = `${into} has uncommitted changes in ${host.path}; merging would mix them in`
+  // tracked files only: an untracked file in the base checkout cannot conflict with a merge, and
+  // stashing one is how you lose it
+  plan.hostDirty = (await git(host.path, ['status', '--porcelain', '-uno', '-z']))
+    .split('\0')
+    .filter((e) => e.length > 3)
+    .map((e) => e.slice(3))
+    .filter((path) => !inWorktrees(path))
+  if (plan.hostDirty.length) {
+    plan.reason = `${into} has ${plan.hostDirty.length} uncommitted file(s) in ${host.path}; merging would mix them in`
     return plan
   }
 
@@ -127,6 +134,41 @@ export async function merge(cwd: string): Promise<string> {
     if (list.length) throw new Error(`conflicts in ${list.length} file(s), merge aborted: ${list.slice(0, 5).join(', ')}`)
     throw err
   }
+}
+
+/**
+ * The same merge, with the base checkout's own uncommitted work set aside and put back.
+ *
+ * The refusal above is the right default: a merge landing on top of someone's half-finished edits
+ * mixes two changes into one state with no way to tell them apart afterwards. But it is a solvable
+ * problem, and solving it by hand is four commands in a directory the user is not looking at.
+ *
+ * Explicit paths, never a bare `stash -u`: the agents' own checkouts live under this one and git
+ * sees them as untracked directories, so a blanket stash would carry off a live worktree.
+ */
+export async function mergeAside(cwd: string): Promise<string> {
+  const plan = await mergePlan(cwd)
+  if (!plan || !plan.at || !plan.commits) throw new Error(plan?.reason ?? 'nothing to merge')
+  if (!plan.hostDirty.length) return merge(cwd)
+
+  const at = plan.at
+  const push = await run(at, ['stash', 'push', '-m', 'agent-fleet merge', '--', ...plan.hostDirty])
+  if (!push.ok) throw new Error(`could not set aside ${plan.into}'s changes: ${push.text}`)
+  const stashed = !push.text.includes('No local changes')
+
+  let merged: string
+  try {
+    merged = await merge(cwd)
+  } catch (err) {
+    // the merge failed and its own abort has already run, so the only thing left is to undo ours
+    if (stashed) await run(at, ['stash', 'pop'])
+    throw err
+  }
+  if (!stashed) return merged
+  const pop = await run(at, ['stash', 'pop'])
+  return pop.ok
+    ? `${merged} · ${plan.hostDirty.length} local file(s) put back`
+    : `${merged} · your ${plan.hostDirty.length} local file(s) are in the stash: ${pop.text}`
 }
 
 /**

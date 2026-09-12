@@ -9,6 +9,7 @@ import { FleetUsage } from './FleetUsage'
 import { Catalog } from './Catalog'
 import { McpPane } from './McpPane'
 import { Rail } from './Rail'
+import { Dock } from './Dock'
 
 interface Props {
   sessions: Session[]
@@ -21,6 +22,8 @@ interface Props {
   onOpen: (id: string) => void
   /** the panel is too narrow for the graph, so the fleet is drawn as the rail instead */
   compact: boolean
+  /** narrower still: tiles only, where even the section tabs do not fit */
+  minimal: boolean
   /** the session open in the workspace, marked in the rail */
   opened: string | null
   /** widen the panel back out of compact */
@@ -55,6 +58,7 @@ export function FleetView({
   onSelect,
   onOpen,
   compact,
+  minimal,
   opened,
   onExpand
 }: Props): JSX.Element {
@@ -66,6 +70,11 @@ export function FleetView({
   const [filter, setFilter] = useState<FilterState>(emptyFilter)
   const [view, setView] = usePersistedOneOf<FleetTab>('fleetView', ['graph', 'waterfall', 'history'], 'graph')
   const shown = useMemo(() => applyFilter(sessions, filter), [sessions, filter])
+
+  // At this width there is no room for sections or filters, and nothing to read even if there were.
+  if (minimal) {
+    return <Dock sessions={sessions} opened={opened} onOpen={onOpen} onExpand={onExpand} />
+  }
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">

@@ -24,7 +24,7 @@ export interface Next {
   text: string
   /** the same thing short enough for a button, and explicit about how far it reaches */
   button: string
-  action: 'stage' | 'commit' | 'merge' | null
+  action: 'stage' | 'commit' | 'merge' | 'mergeAside' | null
   /** why the obvious next step cannot happen */
   blocked: string | null
   /** true when nothing is left to move */
@@ -141,6 +141,18 @@ export function nextOf(
   }
   if (committed.count > 0 || merged.count > 0) {
     const into = plan?.into ?? 'the main branch'
+    // The base checkout having its own open files is the one refusal with a safe way through: set
+    // them aside, merge, put them back. Offered rather than done silently, because it touches a
+    // checkout the user is not looking at.
+    if (plan && !plan.ok && plan.hostDirty.length) {
+      return {
+        text: `merge ${plural(merged.count || committed.count, 'commit')} into ${into}, around its ${plural(plan.hostDirty.length, 'open file')}`,
+        button: `merge → ${into} (local)`,
+        action: 'mergeAside',
+        blocked: null,
+        done: false
+      }
+    }
     if (plan && !plan.ok) {
       return {
         text: `merge into ${into}`,

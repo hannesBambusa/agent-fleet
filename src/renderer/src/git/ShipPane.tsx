@@ -32,10 +32,11 @@ interface Props {
   onStage: () => void
   onCommit: () => void
   onMerge: () => void
+  onMergeAside: () => void
   onUpdate: () => void
 }
 
-export function ShipPane({ cwd, onDone, wt, host, plan: merge, worktree, busy, onStage, onCommit, onMerge, onUpdate }: Props): JSX.Element {
+export function ShipPane({ cwd, onDone, wt, host, plan: merge, worktree, busy, onStage, onCommit, onMerge, onMergeAside, onUpdate }: Props): JSX.Element {
   const [plan, setPlan] = useState<ShipPlan | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
@@ -108,6 +109,7 @@ export function ShipPane({ cwd, onDone, wt, host, plan: merge, worktree, busy, o
       onStage={onStage}
       onCommit={onCommit}
       onMerge={onMerge}
+      onMergeAside={onMergeAside}
       onUpdate={onUpdate}
     />
   )

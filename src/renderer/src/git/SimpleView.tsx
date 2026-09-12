@@ -31,6 +31,7 @@ export function SimpleView({
   onStage,
   onCommit,
   onMerge,
+  onMergeAside,
   onUpdate,
   onFile
 }: {
@@ -44,6 +45,7 @@ export function SimpleView({
   onStage: () => void
   onCommit: () => void
   onMerge: () => void
+  onMergeAside: () => void
   onUpdate: () => void
   /** opening a file hands the reader to the full view, which is where diffs live */
   onFile: (f: GitFile) => void
@@ -65,6 +67,7 @@ export function SimpleView({
         onStage={onStage}
         onCommit={onCommit}
         onMerge={onMerge}
+        onMergeAside={onMergeAside}
         onUpdate={onUpdate}
       />
 

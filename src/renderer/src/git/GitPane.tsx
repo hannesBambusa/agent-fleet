@@ -295,6 +295,31 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
     }
   }
 
+  /**
+   * The merge, with the base checkout's own open files set aside and put back.
+   *
+   * Confirmed like any other write to a checkout the user is not looking at, and the result line
+   * says whether the stash came back — the one outcome worth reading even when it worked.
+   */
+  async function mergeAside(): Promise<void> {
+    if (!confirmMerge) {
+      setConfirmMerge(true)
+      return
+    }
+    setConfirmMerge(false)
+    setMerging(true)
+    setPushMsg(null)
+    try {
+      setPushMsg({ text: await window.api.git.mergeAside(cwd), ok: true })
+      await refresh()
+      setPlan(await window.api.git.mergePlan(cwd))
+    } catch (err) {
+      setPushMsg({ text: err instanceof Error ? err.message : String(err), ok: false })
+    } finally {
+      setMerging(false)
+    }
+  }
+
   /** The other direction: what main gained since this branch was cut. */
   async function update(): Promise<void> {
     setMerging(true)
@@ -382,6 +407,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
             if (message.trim()) void doCommit()
           }}
           onMerge={() => void merge()}
+          onMergeAside={() => void mergeAside()}
           onUpdate={() => void update()}
           onFile={(f) => {
             // the diff lives in the full pane, so opening one takes the reader there
@@ -684,6 +710,7 @@ export function GitPane({ cwd, repoPath }: { cwd: string; repoPath: string }): J
               else void doCommit()
             }}
             onMerge={() => void merge()}
+            onMergeAside={() => void mergeAside()}
             onUpdate={() => void update()}
           />
         ) : tab === 'history' ? (

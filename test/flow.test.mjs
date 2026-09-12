@@ -54,7 +54,7 @@ test('staged before committed', () => {
 // nowhere else. The old pane showed a clean tree and said nothing about main.
 test('committed in the worktree and not merged is not done', () => {
   const wt = st({ ahead: 3 })
-  const plan = { ok: true, reason: null, branch: 'wt:agent-2', into: 'main', commits: 3, files: 9, fastForward: true, merged: false, baseUnpushed: 0, at: '/repo' }
+  const plan = { ok: true, reason: null, branch: 'wt:agent-2', into: 'main', commits: 3, files: 9, fastForward: true, merged: false, baseUnpushed: 0, hostDirty: [], at: '/repo' }
   const s = stagesOf(wt, st(), plan, true)
   assert.equal(at(s, 'committed').count, 3)
   assert.equal(at(s, 'merged').count, 3)
@@ -66,7 +66,7 @@ test('committed in the worktree and not merged is not done', () => {
 
 test('once merged, the worktree stations go quiet', () => {
   const wt = st({ ahead: 3 })
-  const plan = { ok: true, reason: null, branch: 'wt:agent-2', into: 'main', commits: 0, files: 0, fastForward: true, merged: true, baseUnpushed: 3, at: '/repo' }
+  const plan = { ok: true, reason: null, branch: 'wt:agent-2', into: 'main', commits: 0, files: 0, fastForward: true, merged: true, baseUnpushed: 3, hostDirty: [], at: '/repo' }
   const host = st({ branch: 'main', unpushed: 3 })
   assert.equal(at(stagesOf(wt, host, plan, true), 'committed').state, 'clear')
   assert.equal(at(stagesOf(wt, host, plan, true), 'merged').state, 'clear')
@@ -80,7 +80,7 @@ test('once merged, the worktree stations go quiet', () => {
 
 test('a refused merge is a blocked station, not a silent one', () => {
   const wt = st({ ahead: 2 })
-  const plan = { ok: false, reason: 'the main checkout has uncommitted changes', branch: 'wt:agent-2', into: 'main', commits: 2, files: 4, fastForward: false, merged: false, baseUnpushed: 0, at: '/repo' }
+  const plan = { ok: false, reason: 'the main checkout has uncommitted changes', branch: 'wt:agent-2', into: 'main', commits: 2, files: 4, fastForward: false, merged: false, baseUnpushed: 0, hostDirty: [], at: '/repo' }
   assert.equal(at(stagesOf(wt, st(), plan, true), 'merged').state, 'blocked')
   const n = nextOf(wt, st(), plan)
   assert.equal(n.action, null)
@@ -127,7 +127,7 @@ test('updating is refused while the worktree has open files', () => {
 test('a worktree is never shown the remote', () => {
   const wt = st({ ahead: 0 })
   const host = st({ branch: 'main', unpushed: 2 })
-  const plan = { ok: true, reason: null, branch: 'wt:agent-2', into: 'main', commits: 0, files: 0, fastForward: true, merged: true, baseUnpushed: 2, at: '/repo' }
+  const plan = { ok: true, reason: null, branch: 'wt:agent-2', into: 'main', commits: 0, files: 0, fastForward: true, merged: true, baseUnpushed: 2, hostDirty: [], at: '/repo' }
   const keys = stagesOf(wt, host, plan, true).map((s) => s.key)
   assert.deepEqual(keys, ['changed', 'staged', 'committed', 'merged'])
   const n = nextOf(wt, host, plan, true)
@@ -143,8 +143,36 @@ test('outside a worktree there is no main to merge into, and the remote is the q
 test('the main checkout reports what a merge would land in, not what it owes its remote', () => {
   const notes = hostNotes(st({ branch: 'main', unpushed: 9, unstaged: [f('x.ts')] }), {
     ok: true, reason: null, branch: 'b', into: 'main', commits: 1, files: 1,
-    fastForward: true, merged: false, baseUnpushed: 9, at: '/repo'
+    fastForward: true, merged: false, baseUnpushed: 9, hostDirty: [], at: '/repo'
   })
   assert.equal(notes.length, 1)
   assert.match(notes[0], /1 uncommitted file/)
+})
+
+// The base checkout having its own open files is the one refusal with a safe way through, and the
+// guided view used to offer nothing at all for it.
+test('a merge blocked only by the base checkout own edits offers to work around them', () => {
+  const wt = st({ ahead: 1 })
+  const plan = {
+    ok: false,
+    reason: 'main has 6 uncommitted file(s) in /repo; merging would mix them in',
+    branch: 'wt:agent-6', into: 'main', commits: 1, files: 3, fastForward: false, merged: false,
+    baseUnpushed: 0, hostDirty: ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts'], at: '/repo'
+  }
+  const n = nextOf(wt, st({ branch: 'main' }), plan, true)
+  assert.equal(n.action, 'mergeAside')
+  assert.equal(n.blocked, null)
+  assert.match(n.text, /around its 6 open files/)
+})
+
+test('any other refusal still blocks with its reason', () => {
+  const wt = st({ ahead: 1 })
+  const plan = {
+    ok: false, reason: 'main is not checked out in any worktree of this repository',
+    branch: 'wt:agent-6', into: 'main', commits: 1, files: 3, fastForward: false, merged: false,
+    baseUnpushed: 0, hostDirty: [], at: null
+  }
+  const n = nextOf(wt, null, plan, true)
+  assert.equal(n.action, null)
+  assert.match(n.blocked, /not checked out/)
 })

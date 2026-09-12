@@ -25,6 +25,7 @@ export function Pipeline({
   onStage,
   onCommit,
   onMerge,
+  onMergeAside,
   onUpdate
 }: {
   wt: GitStatus | null
@@ -36,13 +37,15 @@ export function Pipeline({
   onStage: () => void
   onCommit: () => void
   onMerge: () => void
+  /** merge with the base checkout's own uncommitted work stashed and restored */
+  onMergeAside: () => void
   onUpdate: () => void
 }): JSX.Element {
   const stages = stagesOf(wt, host, plan, worktree)
   const next = nextOf(wt, host, plan, worktree)
   const notes = hostNotes(host, plan)
   const incoming = incomingOf(wt)
-  const run = { stage: onStage, commit: onCommit, merge: onMerge }
+  const run = { stage: onStage, commit: onCommit, merge: onMerge, mergeAside: onMergeAside }
 
   return (
     <div className="shrink-0 border-b border-[var(--line)] px-4 py-3">

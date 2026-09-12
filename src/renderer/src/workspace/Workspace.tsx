@@ -35,10 +35,17 @@ const BROWSER_KEY = 'agent-fleet.browserWidth'
 const BROWSER_MIN = 320
 const AGENT_MIN = 380
 
+/**
+ * The height the lanes open to, which is the only part of this worth remembering.
+ *
+ * The pane itself always opens as the strip: the timeline is worth a glance far more often than it
+ * is worth reading, and the lanes are one double click away. What is stored is how tall they were
+ * last time they were open, so expanding lands where you left it.
+ */
 function readTimelineHeight(): number {
   try {
     const v = Number(localStorage.getItem(TIMELINE_KEY))
-    if (v >= TIMELINE_COMPACT) return v
+    if (v >= TIMELINE_MIN) return v
   } catch {
     // storage unavailable
   }
@@ -66,11 +73,10 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
     setView(agent.chat === false ? 'terminal' : 'chat')
   }, [agent?.id, agent?.chat])
   // whether the right panel is showing at all, which is a working preference rather than a per-agent one
-  const [browserOn, setBrowserOn] = usePersisted<boolean>('rightPanelOpen', true)
   const [browserWidth, setBrowserWidth] = useState(readBrowserWidth)
-  const [timelineH, setTimelineH] = useState(readTimelineHeight)
+  const [timelineH, setTimelineH] = useState(TIMELINE_COMPACT)
   // the height to come back to when the strip is toggled off again
-  const lastTimeline = useRef(Math.max(TIMELINE_MIN, readTimelineHeight()))
+  const lastTimeline = useRef(readTimelineHeight())
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [boxH, setBoxH] = useState(0)
@@ -102,7 +108,9 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
   const showTerminal = !!agent && view === 'terminal'
   // the browser needs real estate; below this the agent pane keeps it all
   // the panel holds git as well as the browser, so it is useful even for a watched session
-  const showPanel = browserOn && width >= BROWSER_MIN + AGENT_MIN
+  // The panel is part of the workspace, not an option. It only drops out when the window cannot
+  // give both it and the agent a usable width, where drawing it would leave neither readable.
+  const showPanel = width >= BROWSER_MIN + AGENT_MIN
   // the pane is anchored to the right edge, so the divider position is measured from there
   const dragBrowser = (delta: number): void => {
     const max = Math.max(BROWSER_MIN, width - AGENT_MIN)
@@ -132,7 +140,7 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
   }
   const persistTimeline = (): void => {
     try {
-      localStorage.setItem(TIMELINE_KEY, String(timelineH))
+      if (timelineH >= TIMELINE_MIN) localStorage.setItem(TIMELINE_KEY, String(timelineH))
     } catch {
       // storage unavailable
     }
@@ -178,17 +186,6 @@ export function Workspace({ s, agent, now }: { s: Session | null; agent: Agent |
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {agent && <Segmented value={view} onChange={setView} options={['chat', 'terminal']} />}
-          <button
-            onClick={() => setBrowserOn(!browserOn)}
-            title="browser and git panel"
-            className={`rounded border px-2 py-1 text-[11px] ${
-              browserOn
-                ? 'border-[var(--accent)]/40 bg-[var(--accent-soft)] text-[var(--accent)]'
-                : 'border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]'
-            }`}
-          >
-            panel
-          </button>
           {agent && <AgentControls agent={agent} />}
         </div>
       </header>

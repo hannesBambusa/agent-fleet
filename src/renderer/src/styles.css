@@ -237,3 +237,11 @@ button[aria-disabled='true'] {
 .work-track-sub::after {
   background: linear-gradient(90deg, transparent, var(--sub), transparent);
 }
+
+/* The fleet folding to tiles: each one lands a beat after the one above, so the column assembles
+   downwards instead of the panel changing under you in a single frame. */
+@keyframes tile-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.82); }
+  to   { opacity: 1; transform: none; }
+}
+.tile-in { animation: tile-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }

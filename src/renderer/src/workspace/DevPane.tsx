@@ -20,6 +20,10 @@ export function DevPane({ repoPath, cwd, agentId }: { repoPath: string; cwd: str
   const [list, setList] = useState<DevServer[] | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [started, setStarted] = useState(false)
+  // A worktree is a second checkout of the same app, and the script carries whatever port the
+  // project baked into it, so the second agent to press start dies on the first one's port. The
+  // suggestion is a free one; it stays editable because some projects pin the port on purpose.
+  const [port, setPort] = useState('')
   const ptyId = `dev:${agentId ?? cwd}`
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -28,6 +32,7 @@ export function DevPane({ repoPath, cwd, agentId }: { repoPath: string; cwd: str
 
   useEffect(() => {
     void window.api.dev.project(cwd).then(setProject)
+    void window.api.dev.freePort().then((p) => setPort(String(p)))
   }, [cwd])
 
   useEffect(() => {
@@ -54,13 +59,14 @@ export function DevPane({ repoPath, cwd, agentId }: { repoPath: string; cwd: str
     }
   }
 
-  function start(): void {
+  async function start(): Promise<void> {
     if (!project?.command) return
+    const n = Number(port)
+    const command = n > 0 ? ((await window.api.dev.onPort(cwd, n)) ?? project.command) : project.command
     const { cols, rows } = termSize()
-    void window.api.dev.start(ptyId, cwd, project.command, cols, rows).then(() => {
-      setStarted(true)
-      setTimeout(() => void refresh(), 2500)
-    })
+    await window.api.dev.start(ptyId, cwd, command, cols, rows)
+    setStarted(true)
+    setTimeout(() => void refresh(), 2500)
   }
 
   return (
@@ -71,9 +77,18 @@ export function DevPane({ repoPath, cwd, agentId }: { repoPath: string; cwd: str
           {project ? `${project.framework ?? 'node'} · ${project.command ?? 'no dev script'}` : 'not a node project'}
         </span>
         {project?.command && !here.length && (
-          <button onClick={start} className="chip chip-running ml-auto shrink-0 hover:brightness-110">
-            start here
-          </button>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            <span className="lbl">port</span>
+            <input
+              value={port}
+              onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ''))}
+              title="the port to start this worktree's server on · blank runs the script as written"
+              className="mono w-[52px] rounded border border-[var(--line)] bg-[var(--ink)] px-1 py-0.5 text-[10px] outline-none focus:border-[var(--accent)]"
+            />
+            <button onClick={() => void start()} className="chip chip-running hover:brightness-110">
+              start here
+            </button>
+          </span>
         )}
         {!!here.length && <span className="lbl ml-auto shrink-0 !text-[var(--accent)]">running here</span>}
       </div>
@@ -142,14 +157,22 @@ function Group({
           <span className="min-w-0 flex-1">
             <span className="mono block truncate text-[11px]">
               {s.ports.length ? (
-                s.ports.map((p) => (
+                s.ports.map((p, i) => (
                   <span key={p} className="mr-2 inline-flex items-baseline gap-1">
                     {/* the agent's own pane by default: the point of the pane is watching what this
                         agent built, and a page in a window behind the app is not that */}
                     <button
                       onClick={() => openLink(`http://localhost:${p}`, agentId)}
-                      title={`open localhost:${p} in this agent's browser`}
-                      className="text-[var(--accent)] underline decoration-[var(--accent)]/30 hover:decoration-[var(--accent)]"
+                      title={
+                        i === 0
+                          ? `open localhost:${p} in this agent's browser`
+                          : `also listening on ${p} · a plugin or devtools of its own, not the app`
+                      }
+                      className={
+                        i === 0
+                          ? 'text-[var(--accent)] underline decoration-[var(--accent)]/30 hover:decoration-[var(--accent)]'
+                          : 'text-[var(--dim)] underline decoration-[var(--dim)]/30 hover:text-[var(--muted)]'
+                      }
                     >
                       :{p}
                     </button>

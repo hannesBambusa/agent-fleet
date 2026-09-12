@@ -49,6 +49,42 @@ export function projectOf(dir: string): DevProject | null {
   return { dir, framework, script, manager, command: script ? `${manager} run ${script}` : null }
 }
 
+// Frameworks that take `--port` on the command line. Everything else is given PORT in the
+// environment, which is what the rest of the node world reads.
+const PORT_FLAG = /^(vite|electron-vite|next|nuxt|astro|remix|gatsby|parcel|webpack-dev-server|react-scripts)$/i
+
+/**
+ * The same dev command, told to listen somewhere else.
+ *
+ * Two agents on one repository run the same script, and the second one dies on the port the first
+ * is holding. The flag goes after `--` so the package manager passes it through to the framework
+ * rather than eating it, and it goes last so it overrides a port baked into the script itself.
+ */
+export function onPort(project: DevProject, port: number): string {
+  if (!project.command) return ''
+  if (project.framework && PORT_FLAG.test(project.framework)) {
+    return `${project.command} -- --port ${port}`
+  }
+  return `PORT=${port} ${project.command}`
+}
+
+/**
+ * A port nothing is listening on, counting up from a base.
+ *
+ * Asked of the operating system rather than of a list of what this app started: the port a
+ * colleague's server or a stopped-but-not-dead process is holding is just as taken.
+ */
+export async function freePort(from = 3100, tries = 40): Promise<number> {
+  const busy = new Set<number>()
+  const out = await sh('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'])
+  for (const line of out.split('\n')) {
+    const m = /:(\d+)\s+\(LISTEN\)/.exec(line)
+    if (m) busy.add(Number(m[1]))
+  }
+  for (let p = from; p < from + tries; p++) if (!busy.has(p)) return p
+  return from
+}
+
 // The executables that are a dev server, matched on the program being run rather than anywhere in
 // the command line: an agent's own command line quotes a system prompt, and a prompt containing the
 // word "next" is not Next.js.
@@ -164,6 +200,13 @@ export async function servers(repoRoot: string): Promise<DevServer[]> {
       existing.pid = p.pid
       existing.command = command
     }
+  }
+  // A framework opens more than one socket: this repo's vite also runs a devtools server, so the
+  // list held 4206 before the app's own 3003. The port the command was told to use is the app;
+  // failing that the lowest, which is where a dev server conventionally sits.
+  for (const g of groups.values()) {
+    const named = Number(/(?:--port[= ]|PORT=)(\d+)/.exec(g.command)?.[1])
+    g.ports.sort((a, b) => Number(b === named) - Number(a === named) || a - b)
   }
   return [...groups.values()].sort(
     (a, b) => Number(b.ports.length > 0) - Number(a.ports.length > 0) || a.pid - b.pid

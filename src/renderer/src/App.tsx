@@ -20,8 +20,14 @@ import { usePtyActivity } from './state/ptyActivity'
 import { Divider } from './lib/Divider'
 
 const FLEET_DEFAULT = 900
-const FLEET_MIN = 200
+// the narrowest the tiles need, and the floor for the drag
+const DOCK_W = 54
+// the width the cycle opens the rail to, wide enough for a row to read
+const RAIL_W = 240
 const COMPACT_BELOW = 520
+// Narrower than a readable row of text. Below it the fleet becomes tiles, which is the only thing
+// that still says something at this width.
+const MINIMAL_BELOW = 132
 const RIGHT_MIN = 560
 const WIDTH_KEY = 'agent-fleet.fleetWidth'
 
@@ -84,7 +90,8 @@ function placeholder(a: Agent, ptyAt: number | undefined, said: SessionState | n
 function readWidth(): number {
   try {
     const v = Number(localStorage.getItem(WIDTH_KEY))
-    if (v >= FLEET_MIN) return v
+    // the dock width is a legitimate saved width, well below the rail's floor
+    if (v >= DOCK_W) return v
   } catch {
     // storage unavailable
   }
@@ -174,8 +181,11 @@ export default function App(): JSX.Element {
 
   const dragFleet = (delta: number): void => {
     const zoom = Number(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale')) || 1
-    const max = Math.max(FLEET_MIN, window.innerWidth / zoom - RIGHT_MIN)
-    setFleetWidth(Math.min(max, Math.max(FLEET_MIN, dragFrom.current + delta)))
+    const max = Math.max(DOCK_W, window.innerWidth / zoom - RIGHT_MIN)
+    // No snap and no dead zone: the handle follows the hand all the way down, and the fleet changes
+    // shape as it passes each threshold. A jump makes the switch feel like a mode change rather
+    // than the panel simply running out of room.
+    setFleetWidth(Math.min(max, Math.max(DOCK_W, dragFrom.current + delta)))
   }
   // Every route to a new width is remembered, not only dragging: the divider's double-click toggles
   // compact, and the rail's own back button expands it, and both were forgotten on restart.
@@ -191,6 +201,7 @@ export default function App(): JSX.Element {
   const current = sessions.find((s) => s.id === opened) ?? known.find((s) => s.id === opened) ?? null
   const hovered = sessions.find((s) => s.id === selected) ?? known.find((s) => s.id === selected) ?? null
   const agent = current ? (agentBySession.get(current.id) ?? null) : null
+  const minimal = fleetWidth < MINIMAL_BELOW
   const compact = fleetWidth < COMPACT_BELOW
 
   async function launch(req: LaunchRequest): Promise<void> {
@@ -239,6 +250,7 @@ export default function App(): JSX.Element {
             onSelect={setSelected}
             onOpen={open}
             compact={compact}
+            minimal={minimal}
             opened={opened}
             onExpand={() => setFleetWidth(FLEET_DEFAULT)}
           />
@@ -250,8 +262,10 @@ export default function App(): JSX.Element {
           }}
           onDrag={dragFleet}
           onEnd={() => setDragging(false)}
-          onDoubleClick={() => setFleetWidth(compact ? FLEET_DEFAULT : FLEET_MIN + 40)}
-          title="drag to resize · double-click to toggle compact"
+          onDoubleClick={() =>
+            setFleetWidth(minimal ? FLEET_DEFAULT : compact ? DOCK_W : RAIL_W)
+          }
+          title="drag to resize · double-click to cycle full, compact, tiles"
         />
         <div className="min-w-0 flex-1 bg-[var(--panel)]">
           {current ? (

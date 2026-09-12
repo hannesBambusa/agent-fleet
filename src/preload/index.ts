@@ -98,6 +98,10 @@ const api = {
     project: (dir: string): Promise<DevProject | null> => ipcRenderer.invoke('dev:project', dir),
     servers: (repoPath: string): Promise<DevServer[]> => ipcRenderer.invoke('dev:servers', repoPath),
     stop: (pgid: number): Promise<{ ok: boolean; error: string | null }> => ipcRenderer.invoke('dev:stop', pgid),
+    /** a port nothing is listening on, so two agents on one repo do not fight over one */
+    freePort: (from?: number): Promise<number> => ipcRenderer.invoke('dev:freePort', from),
+    /** the project's own dev command, told to listen on that port */
+    onPort: (dir: string, port: number): Promise<string | null> => ipcRenderer.invoke('dev:onPort', dir, port),
     start: (id: string, cwd: string, command: string, cols: number, rows: number): Promise<void> =>
       ipcRenderer.invoke('dev:start', id, cwd, command, cols, rows)
   },
@@ -150,6 +154,8 @@ const api = {
     dirty: (cwds: string[]): Promise<Record<string, { changed: number; staged: number }>> =>
       ipcRenderer.invoke('git:dirty', cwds),
     merge: (cwd: string): Promise<string> => ipcRenderer.invoke('git:merge', cwd),
+    /** the same merge, with the base checkout's uncommitted work stashed and put back */
+    mergeAside: (cwd: string): Promise<string> => ipcRenderer.invoke('git:mergeAside', cwd),
     /** the other direction: the base branch's newer commits, merged into this worktree */
     update: (cwd: string): Promise<string> => ipcRenderer.invoke('git:update', cwd),
     publish: (cwd: string): Promise<string> => ipcRenderer.invoke('git:publish', cwd),

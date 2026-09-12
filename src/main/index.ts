@@ -21,6 +21,7 @@ import {
   applyChanges as gitApply,
   applyPlan as gitApplyPlan,
   merge as gitMerge,
+  mergeAside as gitMergeAside,
   updateFromBase as gitUpdateFromBase,
   publish as gitPublish,
   pullRequestUrl as gitPullRequestUrl,
@@ -39,7 +40,7 @@ import { catalog } from './catalog'
 import { Attention } from './attention'
 import { purge, purgePlan } from './agents/purge'
 import { labelFor, setLabel } from './sessions/labels'
-import { projectOf, servers as devServers, stop as stopDev } from './dev'
+import { freePort as devFreePort, onPort as devOnPort, projectOf, servers as devServers, stop as stopDev } from './dev'
 import { mcpServers } from './catalog/mcp'
 import { pickImage, saveImage, thumbnail } from './files/attach'
 import { listDir, readTextFile } from './files/browse'
@@ -152,6 +153,11 @@ function wireIpc(): void {
   ipcMain.handle('browser:console', (_, agentId: string) => browser.consoleOf(agentId))
   ipcMain.handle('browser:clearConsole', (_, agentId: string) => browser.clearConsole(agentId))
   ipcMain.handle('dev:project', (_, dir: string) => projectOf(dir))
+  ipcMain.handle('dev:freePort', (_, from?: number) => devFreePort(from))
+  ipcMain.handle('dev:onPort', (_, dir: string, port: number) => {
+    const p = projectOf(dir)
+    return p ? devOnPort(p, port) : null
+  })
   ipcMain.handle('dev:servers', (_, repoPath: string) => devServers(repoPath))
   ipcMain.handle('dev:stop', (_, pgid: number) => stopDev(pgid))
   // started through a pty, so its output is a terminal like any other and it dies with the app
@@ -257,6 +263,7 @@ function wireIpc(): void {
   ipcMain.handle('git:log', (_, cwd: string) => gitLog(cwd))
   ipcMain.handle('git:mergePlan', (_, cwd: string) => gitMergePlan(cwd))
   ipcMain.handle('git:merge', (_, cwd: string) => gitMerge(cwd))
+  ipcMain.handle('git:mergeAside', (_, cwd: string) => gitMergeAside(cwd))
   ipcMain.handle('git:update', (_, cwd: string) => gitUpdateFromBase(cwd))
   ipcMain.handle('git:publish', (_, cwd: string) => gitPublish(cwd))
   ipcMain.handle('seed:plan', (_, repoPath: string, worktree: string) => seedPlan(repoPath, worktree))

@@ -291,6 +291,8 @@ export interface MergePlan {
   merged: boolean
   /** commits sitting in the base branch that no remote has yet */
   baseUnpushed: number
+  /** uncommitted paths in the base checkout: what stops the merge, and what can be set aside */
+  hostDirty: string[]
   /** the checkout the merge would run in, which is where the target branch lives */
   at: string | null
 }
